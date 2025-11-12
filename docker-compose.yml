@@ -1,0 +1,70 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sentinel_db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sentinel_core_db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: always
+  redis:
+    image: redis:7-alpine
+    container_name: sentinel_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  api:
+    build: .
+    container_name: sentinel_api
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./config.yml:/app/config.yml:ro
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=admin
+      - POSTGRES_PASSWORD=password
+    restart: always
+
+  worker:
+    build: .
+    container_name: sentinel_worker
+    command: celery -A src.tasks.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+      - ./config.yml:/app/config.yml:ro
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=admin
+      - POSTGRES_PASSWORD=password
+    restart: always
+
+  ui:
+    build: .
+    container_name: sentinel_ui
+    command: streamlit run src/ui.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    depends_on:
+      - api
+    restart: always
+
+volumes:
+  pg_data:
