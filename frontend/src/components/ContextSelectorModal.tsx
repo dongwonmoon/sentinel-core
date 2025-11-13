@@ -1,7 +1,7 @@
 // frontend/src/components/ContextSelectorModal.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -10,7 +10,6 @@ import {
   Button,
   List,
   ListItem,
-  ListItemText,
   Checkbox,
   FormControlLabel,
   CircularProgress,
@@ -38,26 +37,30 @@ export default function ContextSelectorModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const fetchDocuments = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.getDocuments();
+      const docs: DocumentItem[] = Object.entries(data).map(([key, value]) => ({
+        filter_key: key,
+        display_name: value,
+      }));
+      setAvailableDocuments(docs);
+      setSelectedDocuments(initialSelectedDocIds);
+    } catch (err: unknown) {
+      console.error('Failed to fetch documents:', err);
+      setError('Failed to load available documents.');
+    } finally {
+      setLoading(false);
+    }
+  }, [initialSelectedDocIds]);
+
   useEffect(() => {
     if (open) {
-      setLoading(true);
-      setError(null);
-      api.getDocuments()
-        .then(data => {
-          const docs: DocumentItem[] = Object.entries(data).map(([key, value]) => ({
-            filter_key: key,
-            display_name: value,
-          }));
-          setAvailableDocuments(docs);
-          setSelectedDocuments(initialSelectedDocIds); // Reset selection on open
-        })
-        .catch(err => {
-          console.error("Failed to fetch documents:", err);
-          setError('Failed to load available documents.');
-        })
-        .finally(() => setLoading(false));
+      void fetchDocuments();
     }
-  }, [open, initialSelectedDocIds]);
+  }, [fetchDocuments, open]);
 
   const handleToggle = (docId: string) => () => {
     const currentIndex = selectedDocuments.indexOf(docId);

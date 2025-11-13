@@ -3,7 +3,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import api, { TokenResponse, UserResponse } from '../lib/api';
+import api, { UserResponse } from '../lib/api';
 import apiClient from '../lib/apiClient';
 
 interface AuthContextType {

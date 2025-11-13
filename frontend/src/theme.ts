@@ -1,5 +1,6 @@
 // frontend/src/theme.ts
 import { createTheme } from '@mui/material/styles';
+import { red } from '@mui/material/colors';
 import { Roboto } from 'next/font/google';
 
 const roboto = Roboto({
@@ -21,7 +22,7 @@ const theme = createTheme({
       main: '#19857b', // A shade of teal
     },
     error: {
-      main: '#red', // A shade of red
+      main: red.A400,
     },
   },
 });
