@@ -1,9 +1,17 @@
+import sys
+from os.path import abspath, dirname
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
+from sqlalchemy import engine_from_config, create_engine
 from sqlalchemy import pool
 
 from alembic import context
+
+# --- Sentinel-Core Integration ---
+# 프로젝트 루트를 sys.path에 추가하여 'src' 모듈을 찾을 수 있도록 함
+sys.path.insert(0, dirname(dirname(abspath(__file__))))
+from src.core.config import settings
+# --- End Integration ---
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -38,7 +46,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    # url = config.get_main_option("sqlalchemy.url") # 기존 방식 비활성화
+    url = settings.SYNC_DATABASE_URL # 중앙 설정에서 URL 가져오기
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -57,11 +66,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # 기존 engine_from_config 방식 대신, 중앙 설정 URL로 직접 엔진 생성
+    connectable = create_engine(settings.SYNC_DATABASE_URL)
 
     with connectable.connect() as connection:
         context.configure(

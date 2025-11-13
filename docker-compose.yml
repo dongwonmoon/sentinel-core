@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: sentinel_api
     entrypoint: ["/app/entrypoint.sh"]
-    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
       - "8000:8000"
     volumes:
@@ -48,7 +48,7 @@ services:
       context: dockerfiles/.
       dockerfile: Dockerfile.worker
     container_name: sentinel_worker
-    command: celery -A src.tasks.celery_app worker --loglevel=info
+    command: celery -A src.worker.celery_app:celery_app worker --loglevel=info
     volumes:
       - .:/app
       - ./config.yml:/app/config.yml:ro
@@ -66,20 +66,17 @@ services:
     restart: always
 
   ui:
-    build: 
-      context: dockerfiles/.
-      dockerfile: Dockerfile.ui
-    container_name: sentinel_ui
-    command: streamlit run src/ui.py --server.port 8501 --server.address 0.0.0.0
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sentinel_ui_frontend
     ports:
-      - "8501:8501"
-    volumes:
-      - .:/app
+      - "3000:3000" # Next.js default port
+    environment:
+      # NEXT_PUBLIC_ prefix is required for Next.js client-side environment variables
+      NEXT_PUBLIC_API_BASE_URL: http://api:8000
     depends_on:
       - api
-    environment:
-      - API_BASE_URL=http://api:8000
-      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
     restart: always
 
 volumes:

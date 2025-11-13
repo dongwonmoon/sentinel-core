@@ -1,36 +1,55 @@
-# 이 파일에서 애플리케이션의 모든 설정을 관리합니다.
+# 이 파일에서 애플리케이션의 모든 설정을 중앙에서 관리합니다.
+# 설정은 각 컴포넌트(app, llm, embedding 등)별로 그룹화됩니다.
 
-# --- 데이터베이스 및 벡터 스토어 설정 ---
-VECTOR_STORE_TYPE: "pg_vector" # "pg_vector" 또는 "milvus"
-MILVUS_HOST: null
-MILVUS_PORT: null
+app:
+  title: "Sentinel RAG System"
+  description: "Enterprise-grade RAG system with advanced capabilities."
+  log_level: "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
-# --- LLM (Large Language Model) 설정 ---
-LLM_TYPE: "openai" # "ollama", "openai", "anthropic"
-OLLAMA_BASE_URL: "http://localhost:11434"
-OLLAMA_MODEL_NAME: "gemma3:1b"
-OLLAMA_TEMPERATURE: 0
-OPENAI_API_BASE_URL: "https://api.groq.com/openai/v1"
-OPENAI_MODEL_NAME: "groq/compound"
-ANTHROPIC_MODEL_NAME: "claude-3-opus-20240229"
+# LLM(Large Language Model) 설정
+llm:
+  # 빠른 LLM: 라우팅, 간단한 답변 등 빠른 응답이 중요한 작업에 사용
+  fast:
+    # provider: "ollama", "openai", "anthropic" 중 선택
+    provider: "openai"
+    model_name: "groq/compound"
+    api_base: "https://api.groq.com/openai/v1"
+    temperature: 0
 
-# --- 임베딩 모델 설정 ---
-EMBEDDING_MODEL_TYPE: "ollama" # "ollama", "huggingface", "openai"
-OLLAMA_EMBEDDING_MODEL_NAME: "nomic-embed-text"
-HUGGINGFACE_EMBEDDING_MODEL_NAME: "sentence-transformers/all-MiniLM-L6-v2"
-OPENAI_EMBEDDING_MODEL_NAME: "text-embedding-3-small"
+  # 강력한 LLM: 코드 생성, 복잡한 추론 등 고성능이 필요한 작업에 사용
+  powerful:
+    # provider: "ollama", "openai", "anthropic" 중 선택
+    # .env 파일의 POWERFUL_... 변수로 아래 값을 덮어쓸 수 있습니다.
+    provider: "ollama"
+    model_name: "llama3:70b"
+    api_base: "http://localhost:11435"
+    temperature: 0
 
-# --- Reranker 설정 ---
-RERANKER_TYPE: "none" # "none", "cohere", "cross_encoder"
-CROSS_ENCODER_MODEL_NAME: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# 임베딩 모델 설정
+embedding:
+  # provider: "ollama", "openai", "huggingface" 중 선택
+  provider: "ollama"
+  # provider가 ollama 또는 openai일 경우, 이 모델 이름을 사용합니다.
+  model_name: "nomic-embed-text"
+  # provider가 huggingface일 경우, 이 모델 이름을 사용합니다.
+  # huggingface_model_name: "sentence-transformers/all-MiniLM-L6-v2"
 
-# --- 도구 (Tools) 설정 ---
-TOOLS_ENABLED:
+# 벡터 저장소 설정
+vector_store:
+  # provider: "pg_vector", "milvus" 중 선택
+  provider: "pg_vector"
+  milvus_host: null
+  milvus_port: null
+
+# 리랭커 설정
+reranker:
+  # provider: "none", "cohere", "cross_encoder" 중 선택
+  provider: "none"
+  # provider가 cross_encoder일 경우, 이 모델 이름을 사용합니다.
+  model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# 활성화할 도구 목록
+tools_enabled:
   - "duckduckgo_search"
   - "code_execution"
-#  - "google_search"
-
-# --- 기타 설정 ---
-APP_TITLE: "Sentinel RAG System"
-APP_DESCRIPTION: "Enterprise-grade RAG system with advanced capabilities."
-LOG_LEVEL: "INFO" # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+  # - "google_search"
