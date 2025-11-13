@@ -1,0 +1,22 @@
+# Celery
+celery
+redis
+
+# DB
+sqlalchemy
+psycopg2-binary
+pgvector
+asyncpg
+ddgs
+
+# Config
+pydantic-settings
+
+# LangChain (Loaders, Splitters, Embeddings)
+langchain-community
+langchain-text-splitters
+langchain-ollama
+langchain-experimental
+ollama
+unstructured # for loaders
+pypdf # for loaders

@@ -1,4 +1,3 @@
-# rerankers/noop_reranker.py
 from typing import List, Tuple
 from langchain_core.documents import Document
 from .base import BaseReranker

@@ -1,4 +1,3 @@
-# tools/base.py
 from langchain_core.tools import BaseTool as LangChainBaseTool
 
 # LangChain의 BaseTool을 그대로 사용하여 타입 힌트로 활용합니다.

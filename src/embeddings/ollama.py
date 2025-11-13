@@ -1,6 +1,5 @@
-# embeddings/ollama.py
 from typing import List
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_ollama.embeddings import OllamaEmbeddings
 from .base import BaseEmbeddingModel
 from ..config import Settings
 from ..logger import get_logger

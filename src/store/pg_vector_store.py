@@ -1,4 +1,3 @@
-# store/pg_vector_store.py
 import json
 from typing import List, Tuple
 

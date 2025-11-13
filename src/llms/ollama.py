@@ -1,9 +1,8 @@
-# llms/ollama.py
 from typing import Any, AsyncIterator, Dict, List
 
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import Runnable
-from langchain_community.chat_models import ChatOllama
+from langchain_ollama.chat_models import ChatOllama
 
 from .base import BaseLLM
 from ..config import Settings
@@ -28,7 +27,7 @@ class OllamaLLM(BaseLLM):
         self._client = ChatOllama(
             base_url=settings.OLLAMA_BASE_URL,
             model=settings.OLLAMA_MODEL_NAME,
-            temperature=0,
+            temperature=settings.OLLAMA_TEMPERATURE,
         )
         logger.info(f"Ollama LLM 초기화 완료. 모델: {settings.OLLAMA_MODEL_NAME}")
 

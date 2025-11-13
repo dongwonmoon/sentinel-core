@@ -19,7 +19,9 @@ services:
     restart: always
 
   api:
-    build: .
+    build: 
+      context: dockerfiles/.
+      dockerfile: Dockerfile.api
     container_name: sentinel_api
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     ports:
@@ -35,10 +37,15 @@ services:
       - DB_PORT=5432
       - DB_USER=admin
       - POSTGRES_PASSWORD=password
+      - DB_NAME=sentinal_core_db
+      - REDIS_HOST=redis
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: always
 
   worker:
-    build: .
+    build: 
+      context: dockerfiles/.
+      dockerfile: Dockerfile.worker
     container_name: sentinel_worker
     command: celery -A src.tasks.celery_app worker --loglevel=info
     volumes:
@@ -52,10 +59,15 @@ services:
       - DB_PORT=5432
       - DB_USER=admin
       - POSTGRES_PASSWORD=password
+      - DB_NAME=sentinal_core_db
+      - REDIS_HOST=redis
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: always
 
   ui:
-    build: .
+    build: 
+      context: dockerfiles/.
+      dockerfile: Dockerfile.ui
     container_name: sentinel_ui
     command: streamlit run src/ui.py --server.port 8501 --server.address 0.0.0.0
     ports:
@@ -64,6 +76,8 @@ services:
       - .:/app
     depends_on:
       - api
+    environment:
+      - API_BASE_URL=http://api:8000
     restart: always
 
 volumes:

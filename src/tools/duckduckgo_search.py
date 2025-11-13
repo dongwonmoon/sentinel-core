@@ -1,4 +1,3 @@
-# tools/duckduckgo_search.py
 from langchain_community.tools import DuckDuckGoSearchRun
 from .base import BaseTool
 from ..logger import get_logger

@@ -1,4 +1,3 @@
-# tests/test_factories.py
 from unittest.mock import MagicMock, patch, create_autospec
 
 import pytest

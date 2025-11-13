@@ -5,12 +5,13 @@ from langchain_community.document_loaders import DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama.embeddings import OllamaEmbeddings
 
-from store.pg_vector_store import PGVectorStore
+from src.config import settings
+from src.store.pg_vector_store import PGVectorStore
 
 # --- 1. 설정 (Configuration) ---
-DB_URL = "postgresql://admin:password@localhost:5432/sentinel_core_db"
+DB_URL = settings.SYNC_DATABASE_URL
 DATA_PATH = os.path.join(os.path.dirname(__file__), "data")
-MODEL_NAME = "nomic-embed-text"
+MODEL_NAME = settings.OLLAMA_EMBEDDING_MODEL_NAME
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 

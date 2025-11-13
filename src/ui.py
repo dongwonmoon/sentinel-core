@@ -1,10 +1,13 @@
 import streamlit as st
-import requests # FastAPI와 통신하기 위한 라이브러리
+import requests
 import json
+import os
 
 # --- 1. 설정 ---
-QUERY_API_URL = "http://127.0.0.1:8000/query/corporate" # 우리가 만든 FastAPI 엔드포인트
-UPLOAD_API_URL = "http://127.0.0.1:8000/upload-and-index" # [추가] 업로드 API 주소
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
+QUERY_API_URL = f"{API_BASE_URL}/query/corporate"
+UPLOAD_API_URL = f"{API_BASE_URL}/upload-and-index"
 
 # --- 2. 페이지 설정 및 제목 ---
 st.set_page_config(page_title="Sentinel-Core", page_icon="🛡️")

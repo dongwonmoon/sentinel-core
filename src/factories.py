@@ -1,6 +1,4 @@
-# src/factories.py
 from typing import List
-from sentence_transformers import CrossEncoder
 
 from .config import Settings
 from .embeddings.base import BaseEmbeddingModel
@@ -43,6 +41,7 @@ def get_reranker(s: Settings) -> BaseReranker:
     if s.RERANKER_TYPE == "none":
         return NoOpReranker()
     if s.RERANKER_TYPE == "cross_encoder":
+        from sentence_transformers import CrossEncoder
         return CrossEncoder(s.CROSS_ENCODER_MODEL_NAME, max_length=512)
     raise ValueError(f"Unsupported reranker type: {s.RERANKER_TYPE}")
 

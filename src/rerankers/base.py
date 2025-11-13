@@ -1,4 +1,3 @@
-# rerankers/base.py
 from abc import ABC, abstractmethod
 from typing import List, Tuple
 from langchain_core.documents import Document

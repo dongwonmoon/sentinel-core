@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import json
 from contextlib import asynccontextmanager
@@ -8,7 +7,6 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sentence_transformers import CrossEncoder
 
 # --- 1. 설정 및 추상화 모듈 임포트 ---
 from .agent_brain import AgentBrain

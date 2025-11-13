@@ -1,0 +1,30 @@
+# FastAPI
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Celery
+celery
+redis
+
+# Config & Schema
+pydantic
+pydantic-settings
+
+# DB
+sqlalchemy
+psycopg2-binary
+pgvector
+asyncpg
+ddgs
+
+# LangChain Core & Brain
+langchain
+langgraph
+langchain-ollama
+langchain-community
+langchain_experimental # for CodeTool
+ollama
+
+# Reranker
+sentence-transformers

@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# Python
+.venv/
+*.pyc
+__pycache__/
+
+# Docker
+Dockerfile
+docker-compose.yml
+dockerfiles
+pg_data/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# 기타
+README.md
+alembic.ini

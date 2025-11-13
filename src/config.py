@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Tuple, Type
-
 import yaml
 from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
                                SettingsConfigDict)
+from pydantic import computed_field
 
 # 1. YAML 설정 소스 함수 정의
 def yaml_config_settings_source() -> dict[str, Any]:
@@ -23,33 +23,76 @@ class Settings(BaseSettings):
     YAML, 환경 변수, 기본값 순서로 설정을 로드합니다.
     """
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_USER: str = "admin"
+    POSTGRES_PASSWORD: str = "password"
+    DB_NAME: str = "sentinel_core_db"
 
-    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sentinel"
+    @computed_field
+    @property
+    def DATABASE_URL(self) -> str:
+        """
+        환경 변수에서 읽어들인 DB 컴포넌트를 조합하여
+        SQLAlchemy 비동기(asyncpg) URL을 생성합니다.
+        """
+        return f"postgresql+asyncpg://{self.DB_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+    
+    @computed_field
+    @property
+    def SYNC_DATABASE_URL(self) -> str:
+        """
+        Alembic 마이그레이션 및 동기 스크립트를 위한
+        'psycopg2' (동기) 드라이버 URL을 생성합니다.
+        """
+        return f"postgresql://{self.DB_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+
+    
+    @computed_field
+    @property
+    def CELERY_BROKER_URL(self) -> str:
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+
+    @computed_field
+    @property
+    def CELERY_RESULT_BACKEND(self) -> str:
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
+
     VECTOR_STORE_TYPE: Literal["pg_vector", "milvus"] = "pg_vector"
     MILVUS_HOST: Optional[str] = None
     MILVUS_PORT: Optional[int] = None
+    
     LLM_TYPE: Literal["ollama", "openai", "anthropic"] = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL_NAME: str = "llama3"
+    OLLAMA_TEMPERATURE: float = 0
+    
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL_NAME: str = "gpt-4o"
+    
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_MODEL_NAME: str = "claude-3-opus-20240229"
+    
     EMBEDDING_MODEL_TYPE: Literal["ollama", "huggingface", "openai"] = "ollama"
     OLLAMA_EMBEDDING_MODEL_NAME: str = "llama3"
     HUGGINGFACE_EMBEDDING_MODEL_NAME: Optional[str] = "sentence-transformers/all-MiniLM-L6-v2"
     OPENAI_EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
+    
     RERANKER_TYPE: Literal["none", "cohere", "cross_encoder"] = "none"
     COHERE_API_KEY: Optional[str] = None
     CROSS_ENCODER_MODEL_NAME: Optional[str] = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    
     TOOLS_ENABLED: List[Literal["duckduckgo_search", "google_search", "code_execution"]] = ["duckduckgo_search"]
     GOOGLE_API_KEY: Optional[str] = None
     GOOGLE_CSE_ID: Optional[str] = None
-    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    
     APP_TITLE: str = "Sentinel RAG System"
     APP_DESCRIPTION: str = "Enterprise-grade RAG system with advanced capabilities."
     LOG_LEVEL: str = "INFO"
+
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
 
     # 3. 커스텀 설정 소스 지정
     @classmethod

@@ -1,4 +1,3 @@
-# tools/google_search.py
 from .base import BaseTool
 from ..config import Settings
 from ..logger import get_logger
