@@ -6,7 +6,7 @@ from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
                                SettingsConfigDict)
 
 # 1. YAML 설정 소스 함수 정의
-def yaml_config_settings_source(settings: BaseSettings) -> dict[str, Any]:
+def yaml_config_settings_source() -> dict[str, Any]:
     """
     프로젝트 루트의 'config.yml' 파일을 읽어 Pydantic 설정 소스로 사용합니다.
     """
