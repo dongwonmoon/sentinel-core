@@ -46,9 +46,13 @@ export interface QueryRequest {
   chat_history?: ChatMessage[];
 }
 
+export type SourceMetadataValue = string | number | boolean | null | undefined;
+
+export type SourceMetadata = Record<string, SourceMetadataValue>;
+
 export interface Source {
   page_content: string;
-  metadata: Record<string, any>;
+  metadata: SourceMetadata;
   score: number;
 }
 

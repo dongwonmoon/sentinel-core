@@ -29,7 +29,7 @@ import SendIcon from '@mui/icons-material/Send';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import { useAuth } from '../context/AuthContext';
-import api, { ChatMessage } from '../lib/api';
+import api, { ChatMessage, Source } from '../lib/api';
 import ConversationSidebar from '../components/ConversationSidebar';
 import ContextSelectorModal from '../components/ContextSelectorModal';
 
@@ -42,9 +42,42 @@ export default function HomePage() {
   const [inputMessage, setInputMessage] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentSources, setCurrentSources] = useState<any[]>([]);
+  const [currentSources, setCurrentSources] = useState<Source[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getErrorMessage = (err: unknown, fallbackMessage: string): string => {
+    if (err instanceof Error && err.message) {
+      return err.message;
+    }
+
+    if (typeof err === 'object' && err !== null && 'response' in err) {
+      const errorWithResponse = err as { response?: { data?: { detail?: string } } };
+      return errorWithResponse.response?.data?.detail ?? fallbackMessage;
+    }
+
+    return fallbackMessage;
+  };
+
+  type SSEMessage =
+    | { event: 'token'; data: string }
+    | { event: 'sources'; data: Source[] };
+
+  const parseSSEMessage = (rawData: string): SSEMessage | null => {
+    try {
+      const parsed = JSON.parse(rawData) as { event?: string; data?: unknown };
+      if (parsed.event === 'token' && typeof parsed.data === 'string') {
+        return { event: 'token', data: parsed.data };
+      }
+      if (parsed.event === 'sources' && Array.isArray(parsed.data)) {
+        return { event: 'sources', data: parsed.data as Source[] };
+      }
+      return null;
+    } catch (parseError) {
+      console.error('Error parsing SSE message:', parseError, rawData);
+      return null;
+    }
+  };
 
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
     open: false,
@@ -84,9 +117,12 @@ export default function HomePage() {
     try {
       const response = await api.uploadFile(file);
       setSnackbar({ open: true, message: response.message, severity: 'success' });
-    } catch (err: any) {
-      const errorDetail = err.response?.data?.detail || 'File upload failed.';
-      setSnackbar({ open: true, message: errorDetail, severity: 'error' });
+    } catch (err: unknown) {
+      setSnackbar({
+        open: true,
+        message: getErrorMessage(err, 'File upload failed.'),
+        severity: 'error',
+      });
     }
   };
 
@@ -99,9 +135,12 @@ export default function HomePage() {
     try {
       const response = await api.indexGithubRepo(repoUrl);
       setSnackbar({ open: true, message: response.message, severity: 'success' });
-    } catch (err: any) {
-      const errorDetail = err.response?.data?.detail || 'GitHub indexing failed.';
-      setSnackbar({ open: true, message: errorDetail, severity: 'error' });
+    } catch (err: unknown) {
+      setSnackbar({
+        open: true,
+        message: getErrorMessage(err, 'GitHub indexing failed.'),
+        severity: 'error',
+      });
     }
   };
   
@@ -132,12 +171,14 @@ export default function HomePage() {
 
   useEffect(() => {
     if (user) {
-      api.getChatHistory().then(history => {
-        setMessages(history.messages.map(msg => ({ role: msg.role, content: msg.content })));
-      }).catch(err => {
-        console.error("Failed to fetch chat history:", err);
-        setError("Failed to load chat history.");
-      });
+      api.getChatHistory()
+        .then(history => {
+          setMessages(history.messages.map(msg => ({ role: msg.role, content: msg.content })));
+        })
+        .catch(err => {
+          console.error('Failed to fetch chat history:', err);
+          setError(getErrorMessage(err, 'Failed to load chat history.'));
+        });
     }
   }, [user]);
 
@@ -146,7 +187,8 @@ export default function HomePage() {
     if (!inputMessage.trim() || isStreaming) return;
 
     const userMessage: ChatMessage = { role: 'user', content: inputMessage };
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
     setInputMessage('');
     setError(null);
     setIsStreaming(true);
@@ -156,13 +198,16 @@ export default function HomePage() {
       await api.queryAgent(
         {
           query: userMessage.content,
-          chat_history: messages,
+          chat_history: updatedMessages,
           doc_ids_filter: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         },
         (event) => { // onMessage
-          const data = JSON.parse(event.data);
-          if (data.event === 'token') {
-            const token = data.data;
+          const sseMessage = parseSSEMessage(event.data);
+          if (!sseMessage) {
+            return;
+          }
+          if (sseMessage.event === 'token') {
+            const token = sseMessage.data;
             setMessages(prev => {
               const lastMessage = prev[prev.length - 1];
               if (lastMessage && lastMessage.role === 'assistant') {
@@ -173,8 +218,8 @@ export default function HomePage() {
                 return [...prev, { role: 'assistant', content: token }];
               }
             });
-          } else if (data.event === 'sources') {
-            setCurrentSources(data.data);
+          } else if (sseMessage.event === 'sources') {
+            setCurrentSources(sseMessage.data);
           }
         },
         (errorEvent) => { // onError
@@ -186,9 +231,9 @@ export default function HomePage() {
           setIsStreaming(false);
         }
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('API Query Error:', err);
-      setError(err.message || 'Failed to get response from agent.');
+      setError(getErrorMessage(err, 'Failed to get response from agent.'));
       setIsStreaming(false);
     }
   };
@@ -250,7 +295,7 @@ export default function HomePage() {
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
         >
-          <ConversationSidebar onNewChat={handleNewChat} mobileOpen={mobileOpen} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
+          <ConversationSidebar onNewChat={handleNewChat} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
         </Drawer>
         <Drawer
           variant="permanent"
@@ -260,7 +305,7 @@ export default function HomePage() {
           }}
           open
         >
-          <ConversationSidebar onNewChat={handleNewChat} mobileOpen={mobileOpen} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
+          <ConversationSidebar onNewChat={handleNewChat} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
         </Drawer>
       </Box>
       <Box

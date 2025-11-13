@@ -13,6 +13,19 @@ export default function LoginPage() {
   const { login, loading, isAuthenticated } = useAuth();
   const router = useRouter();
 
+  const getErrorMessage = (err: unknown, fallbackMessage: string): string => {
+    if (err instanceof Error && err.message) {
+      return err.message;
+    }
+
+    if (typeof err === 'object' && err !== null && 'response' in err) {
+      const errorWithResponse = err as { response?: { data?: { detail?: string } } };
+      return errorWithResponse.response?.data?.detail ?? fallbackMessage;
+    }
+
+    return fallbackMessage;
+  };
+
   React.useEffect(() => {
     if (isAuthenticated) {
       router.push('/'); // Redirect to home if already authenticated
@@ -25,8 +38,8 @@ export default function LoginPage() {
     try {
       await login(username, password);
       // Redirection handled by AuthContext
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Login failed. Please check your credentials.');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Login failed. Please check your credentials.'));
     }
   };
 
@@ -87,7 +100,7 @@ export default function LoginPage() {
             variant="text"
             onClick={() => router.push('/register')}
           >
-            Don't have an account? Sign Up
+            Don&apos;t have an account? Sign Up
           </Button>
         </Box>
       </Box>

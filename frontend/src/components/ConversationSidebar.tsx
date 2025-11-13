@@ -8,11 +8,10 @@ import {
   Typography,
   Divider,
   List,
-  ListItem,
   ListItemText,
   IconButton,
   Button,
-  ListItemButton, // Add ListItemButton
+  ListItemButton,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
@@ -22,12 +21,11 @@ import { useAuth } from '../context/AuthContext';
 
 interface ConversationSidebarProps {
   onNewChat: () => void;
-  mobileOpen: boolean;
   handleDrawerToggle: () => void;
   drawerWidth: number;
 }
 
-export default function ConversationSidebar({ onNewChat, mobileOpen, handleDrawerToggle, drawerWidth }: ConversationSidebarProps) {
+export default function ConversationSidebar({ onNewChat, handleDrawerToggle, drawerWidth }: ConversationSidebarProps) {
   const { user, logout } = useAuth();
 
   // Placeholder for conversation sessions

@@ -43,6 +43,19 @@ export default function RegisterPage() {
   const { register, loading } = useAuth();
   const router = useRouter();
 
+  const getErrorMessage = (err: unknown, fallbackMessage: string): string => {
+    if (err instanceof Error && err.message) {
+      return err.message;
+    }
+
+    if (typeof err === 'object' && err !== null && 'response' in err) {
+      const errorWithResponse = err as { response?: { data?: { detail?: string } } };
+      return errorWithResponse.response?.data?.detail ?? fallbackMessage;
+    }
+
+    return fallbackMessage;
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -56,10 +69,9 @@ export default function RegisterPage() {
     try {
       await register(username, password, permissionGroups);
       setSuccess('Registration successful! You can now log in.');
-      // Optionally clear form or redirect
       router.push('/login');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Registration failed.');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Registration failed.'));
     }
   };
 
