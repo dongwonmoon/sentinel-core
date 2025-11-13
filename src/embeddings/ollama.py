@@ -6,6 +6,7 @@ from ..logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class OllamaEmbedding(BaseEmbeddingModel):
     """
     Ollama를 사용하여 텍스트 임베딩을 수행하는 클래스입니다.
@@ -23,9 +24,11 @@ class OllamaEmbedding(BaseEmbeddingModel):
         # 설정 객체로부터 Ollama 관련 설정을 사용하여 OllamaEmbeddings 인스턴스를 생성합니다.
         self.client = OllamaEmbeddings(
             base_url=settings.OLLAMA_BASE_URL,
-            model=settings.OLLAMA_EMBEDDING_MODEL_NAME
+            model=settings.OLLAMA_EMBEDDING_MODEL_NAME,
         )
-        logger.info(f"Ollama 임베딩 모델 초기화 완료. 모델: {settings.OLLAMA_EMBEDDING_MODEL_NAME}")
+        logger.info(
+            f"Ollama 임베딩 모델 초기화 완료. 모델: {settings.OLLAMA_EMBEDDING_MODEL_NAME}"
+        )
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """

@@ -1,4 +1,5 @@
 """Pytest configuration for ensuring root package importability."""
+
 from __future__ import annotations
 
 import sys

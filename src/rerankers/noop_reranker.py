@@ -5,6 +5,7 @@ from ..logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class NoOpReranker(BaseReranker):
     """
     아무 작업도 수행하지 않는 Reranker 구현체입니다.

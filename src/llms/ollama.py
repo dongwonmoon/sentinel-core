@@ -10,11 +10,13 @@ from ..logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class OllamaLLM(BaseLLM):
     """
     Ollama를 사용하여 LLM 기능을 수행하는 클래스입니다.
     BaseLLM을 상속받아 구체적인 스트리밍 및 호출 로직을 구현합니다.
     """
+
     _client: Runnable
 
     def __init__(self, settings: Settings):
@@ -29,7 +31,9 @@ class OllamaLLM(BaseLLM):
             model=settings.OLLAMA_MODEL_NAME,
             temperature=settings.OLLAMA_TEMPERATURE,
         )
-        logger.info(f"Ollama LLM 초기화 완료. 모델: {settings.OLLAMA_MODEL_NAME}")
+        logger.info(
+            f"Ollama LLM 초기화 완료. 모델: {settings.OLLAMA_MODEL_NAME}"
+        )
 
     @property
     def client(self) -> Runnable:
@@ -38,7 +42,9 @@ class OllamaLLM(BaseLLM):
         """
         return self._client
 
-    async def stream(self, messages: List[BaseMessage], config: Dict[str, Any]) -> AsyncIterator[Any]:
+    async def stream(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> AsyncIterator[Any]:
         """
         Ollama 모델로부터 응답을 스트리밍합니다.
 
@@ -52,7 +58,9 @@ class OllamaLLM(BaseLLM):
         async for chunk in self.client.astream(messages, config=config):
             yield chunk
 
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         Ollama 모델을 호출하여 전체 응답을 받습니다.
 

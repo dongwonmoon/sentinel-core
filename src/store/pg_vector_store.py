@@ -1,5 +1,5 @@
 import json
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from langchain_core.documents import Document
 from sqlalchemy import text
@@ -37,7 +37,9 @@ class PgVectorStore(BaseVectorStore):
         )
         # 텍스트 임베딩을 위한 모델을 설정합니다.
         self.embedding_model = embedding_model
-        logger.info("PgVectorStore 초기화 완료. 비동기 엔진 및 임베딩 모델이 설정되었습니다.")
+        logger.info(
+            "PgVectorStore 초기화 완료. 비동기 엔진 및 임베딩 모델이 설정되었습니다."
+        )
 
     async def upsert_documents(
         self,
@@ -56,7 +58,9 @@ class PgVectorStore(BaseVectorStore):
             return
 
         # 문서 내용(page_content)을 임베딩합니다.
-        embeddings = self.embedding_model.embed_documents([doc.page_content for doc in documents])
+        embeddings = self.embedding_model.embed_documents(
+            [doc.page_content for doc in documents]
+        )
         doc_ids_to_clear = list(set(doc.metadata.get("doc_id") for doc in documents))
 
         async with self.AsyncSessionLocal() as session:
@@ -74,46 +78,61 @@ class PgVectorStore(BaseVectorStore):
                                 "permission_groups": permission_groups,
                                 "metadata": json.dumps(doc.metadata),
                             }
-                    
+
                     if doc_infos:
-                        stmt_docs_upsert = text("""
+                        stmt_docs_upsert = text(
+                            """
                             INSERT INTO documents (doc_id, source_type, permission_groups, metadata)
                             VALUES (:doc_id, :source_type, :permission_groups, :metadata) 
                             ON CONFLICT (doc_id) DO UPDATE SET
                                 source_type = EXCLUDED.source_type,
                                 permission_groups = EXCLUDED.permission_groups,
                                 metadata = EXCLUDED.metadata
-                        """)
-                        await session.execute(stmt_docs_upsert, list(doc_infos.values()))
+                        """
+                        )
+                        await session.execute(
+                            stmt_docs_upsert, list(doc_infos.values())
+                        )
 
                     # document_chunks 테이블에서 기존 청크 삭제
                     if doc_ids_to_clear:
                         await session.execute(
-                            text("DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)"),
+                            text(
+                                "DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)"
+                            ),
                             {"doc_ids": doc_ids_to_clear},
                         )
 
                     # 2. 새로운 청크 정보 추가
                     chunk_data_list = []
                     for i, doc in enumerate(documents):
-                        chunk_data_list.append({
-                            "doc_id": doc.metadata.get("doc_id"),
-                            "chunk_text": doc.page_content,
-                            "embedding": str(embeddings[i]),
-                            "metadata": json.dumps(doc.metadata),
-                        })
+                        chunk_data_list.append(
+                            {
+                                "doc_id": doc.metadata.get("doc_id"),
+                                "chunk_text": doc.page_content,
+                                "embedding": str(embeddings[i]),
+                                "metadata": json.dumps(doc.metadata),
+                            }
+                        )
 
                     if chunk_data_list:
-                        stmt_chunks_insert = text("""
+                        stmt_chunks_insert = text(
+                            """
                             INSERT INTO document_chunks (doc_id, chunk_text, embedding, metadata)
                             VALUES (:doc_id, :chunk_text, :embedding, :metadata)
-                        """)
+                        """
+                        )
                         await session.execute(stmt_chunks_insert, chunk_data_list)
-                    
-                    logger.info(f"{len(doc_infos)}개 문서, {len(documents)}개 청크 Upsert 완료.")
+
+                    logger.info(
+                        f"{len(doc_infos)}개 문서, {len(documents)}개 청크 Upsert 완료."
+                    )
 
                 except Exception as e:
-                    logger.error(f"PgVectorStore Upsert 중 에러 발생! 롤백됩니다. {e}", exc_info=True)
+                    logger.error(
+                        f"PgVectorStore Upsert 중 에러 발생! 롤백됩니다. {e}",
+                        exc_info=True,
+                    )
                     raise
 
     async def search(
@@ -121,6 +140,7 @@ class PgVectorStore(BaseVectorStore):
         query: str,
         allowed_groups: List[str],
         k: int = 4,
+        doc_ids_filter: Optional[List[str]] = None,
     ) -> List[Tuple[Document, float]]:
         """
         주어진 쿼리와 유사한 문서를 비동기적으로 검색합니다.
@@ -151,24 +171,50 @@ class PgVectorStore(BaseVectorStore):
                 documents AS d ON c.doc_id = d.doc_id
             WHERE
                 d.permission_groups && :allowed_groups
-            ORDER BY distance
-            LIMIT :top_k
         """
+
+        params = {"allowed_groups": allowed_groups, "top_k": k}
+
+        if doc_ids_filter:
+            where_clauses = []
+            for i, f in enumerate(doc_ids_filter):
+                if f.endswith("/"):
+                    # 'file-upload-my_repo.zip/' 같은 접두사(Prefix)인 경우
+                    param_name = f"p{i}"
+                    where_clauses.append(f"d.doc_id LIKE :{param_name}")
+                    params[param_name] = f + "%"  # 와일드카드 추가
+                else:
+                    # 'file-upload-hr_policy.txt' 같은 정확한 ID인 경우
+                    param_name = f"id{i}"
+                    where_clauses.append(f"d.doc_id = :{param_name}")
+                    params[param_name] = f
+
+            if where_clauses:
+                sql_query += " AND (" + " OR ".join(where_clauses) + ")"
+                logger.info(f"컨텍스트 필터 적용: {where_clauses}")
+
+        sql_query += " ORDER BY distance LIMIT :top_k"
 
         async with self.AsyncSessionLocal() as session:
             result = await session.execute(
                 text(sql_query),
-                {"allowed_groups": allowed_groups, "top_k": k},
+                params,
             )
-            
+
             search_results = []
             for row in result:
                 # DB에서 읽어온 메타데이터(JSON 문자열)를 파싱합니다.
-                metadata = json.loads(row.metadata) if isinstance(row.metadata, str) else row.metadata
-                
+                metadata = (
+                    json.loads(row.metadata)
+                    if isinstance(row.metadata, str)
+                    else row.metadata
+                )
+
                 # LangChain Document 객체로 변환합니다.
                 doc = Document(page_content=row.chunk_text, metadata=metadata)
                 search_results.append((doc, row.distance))
 
-            logger.info(f"'{query[:20]}...' 쿼리로 {len(search_results)}개 결과 검색 완료.")
+            logger.info(
+                f"'{query[:20]}...' 쿼리로 {len(search_results)}개 결과 검색 완료."
+            )
             return search_results

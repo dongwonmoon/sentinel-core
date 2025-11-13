@@ -1,7 +1,8 @@
 import logging
 import sys
 
-from config import settings
+from .config import settings
+
 
 def get_logger(name: str) -> logging.Logger:
     """
@@ -15,7 +16,7 @@ def get_logger(name: str) -> logging.Logger:
     """
     # 로거를 가져옵니다.
     logger = logging.getLogger(name)
-    
+
     # 로거에 핸들러가 이미 설정되어 있는지 확인하여 중복 추가를 방지합니다.
     if not logger.handlers:
         # 로그 레벨을 config에서 읽어와 설정합니다.
@@ -30,7 +31,7 @@ def get_logger(name: str) -> logging.Logger:
         # 로그를 콘솔(stdout)으로 보내는 핸들러를 생성합니다.
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(formatter)
-        
+
         # 로거에 핸들러를 추가합니다.
         logger.addHandler(handler)
 

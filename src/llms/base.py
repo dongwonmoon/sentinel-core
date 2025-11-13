@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Dict, List
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import Runnable
 
+
 class BaseLLM(ABC):
     """
     생성용 LLM (Large Language Model)의 기본 인터페이스를 정의하는 추상 기본 클래스입니다.
@@ -19,7 +20,9 @@ class BaseLLM(ABC):
         pass
 
     @abstractmethod
-    async def stream(self, messages: List[BaseMessage], config: Dict[str, Any]) -> AsyncIterator[Any]:
+    async def stream(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> AsyncIterator[Any]:
         """
         주어진 메시지를 바탕으로 LLM의 응답을 스트리밍 방식으로 반환합니다.
 
@@ -33,7 +36,9 @@ class BaseLLM(ABC):
         pass
 
     @abstractmethod
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         주어진 메시지를 바탕으로 LLM의 전체 응답을 한 번에 반환합니다.
 

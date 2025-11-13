@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List
 
+
 class BaseEmbeddingModel(ABC):
     """
     임베딩 모델의 기본 인터페이스를 정의하는 추상 기본 클래스(ABC)입니다.

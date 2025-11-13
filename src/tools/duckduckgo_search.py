@@ -4,6 +4,7 @@ from ..logger import get_logger
 
 logger = get_logger(__name__)
 
+
 def get_duckduckgo_search_tool() -> BaseTool:
     """
     DuckDuckGo 검색 도구 인스턴스를 생성하여 반환합니다.

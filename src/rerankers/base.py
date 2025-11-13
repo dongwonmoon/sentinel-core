@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple
 from langchain_core.documents import Document
 
+
 class BaseReranker(ABC):
     """
     Reranker의 기본 인터페이스를 정의하는 추상 기본 클래스입니다.

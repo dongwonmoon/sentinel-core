@@ -24,3 +24,6 @@ pypdf # for loaders
 
 markdown
 python-magic
+tree-sitter
+tree-sitter-languages
+GitPython

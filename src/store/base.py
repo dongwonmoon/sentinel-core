@@ -3,6 +3,7 @@ from typing import List, Tuple, Dict, Any, Optional
 
 from langchain_core.documents import Document
 
+
 class BaseVectorStore(ABC):
     """
     벡터 스토어의 기본 인터페이스를 정의하는 추상 기본 클래스입니다.

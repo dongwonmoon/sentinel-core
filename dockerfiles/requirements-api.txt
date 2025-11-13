@@ -18,6 +18,7 @@ psycopg2-binary
 pgvector
 asyncpg
 ddgs
+GitPython
 
 # LangChain Core & Brain
 langchain

@@ -27,9 +27,13 @@ class MilvusVectorStore(BaseVectorStore):
         """
         self.settings = settings
         self.embedding_model = embedding_model
-        logger.warning("MilvusVectorStore가 초기화되었지만, 아직 구현되지 않았습니다.")
+        logger.warning(
+            "MilvusVectorStore가 초기화되었지만, 아직 구현되지 않았습니다."
+        )
         # 예: self.client = MilvusClient(host=settings.MILVUS_HOST, port=settings.MILVUS_PORT)
-        raise NotImplementedError("MilvusVectorStore는 아직 구현되지 않았습니다.")
+        raise NotImplementedError(
+            "MilvusVectorStore는 아직 구현되지 않았습니다."
+        )
 
     async def upsert_documents(
         self,
@@ -39,7 +43,9 @@ class MilvusVectorStore(BaseVectorStore):
         """
         문서를 Milvus 벡터 스토어에 비동기적으로 추가하거나 업데이트합니다.
         """
-        raise NotImplementedError("MilvusVectorStore의 upsert_documents가 구현되지 않았습니다.")
+        raise NotImplementedError(
+            "MilvusVectorStore의 upsert_documents가 구현되지 않았습니다."
+        )
 
     async def search(
         self,
@@ -50,4 +56,6 @@ class MilvusVectorStore(BaseVectorStore):
         """
         Milvus에서 주어진 쿼리와 유사한 문서를 비동기적으로 검색합니다.
         """
-        raise NotImplementedError("MilvusVectorStore의 search가 구현되지 않았습니다.")
+        raise NotImplementedError(
+            "MilvusVectorStore의 search가 구현되지 않았습니다."
+        )
