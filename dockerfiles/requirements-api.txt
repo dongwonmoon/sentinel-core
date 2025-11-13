@@ -12,6 +12,7 @@ pydantic
 pydantic-settings
 
 # DB
+alembic
 sqlalchemy
 psycopg2-binary
 pgvector
@@ -22,9 +23,10 @@ ddgs
 langchain
 langgraph
 langchain-ollama
+langchain-openai
 langchain-community
 langchain_experimental # for CodeTool
 ollama
 
 # Reranker
-sentence-transformers
+# sentence-transformers

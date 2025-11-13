@@ -72,13 +72,13 @@ class PgVectorStore(BaseVectorStore):
                                 "doc_id": doc_id,
                                 "source_type": doc.metadata.get("source_type"),
                                 "permission_groups": permission_groups,
-                                "metadata": json.dumps(doc.metadata or {}),
+                                "metadata": json.dumps(doc.metadata),
                             }
                     
                     if doc_infos:
                         stmt_docs_upsert = text("""
                             INSERT INTO documents (doc_id, source_type, permission_groups, metadata)
-                            VALUES (:doc_id, :source_type, :permission_groups, :metadata)
+                            VALUES (:doc_id, :source_type, :permission_groups, :metadata) 
                             ON CONFLICT (doc_id) DO UPDATE SET
                                 source_type = EXCLUDED.source_type,
                                 permission_groups = EXCLUDED.permission_groups,
@@ -99,8 +99,8 @@ class PgVectorStore(BaseVectorStore):
                         chunk_data_list.append({
                             "doc_id": doc.metadata.get("doc_id"),
                             "chunk_text": doc.page_content,
-                            "embedding": embeddings[i],
-                            "metadata": json.dumps(doc.metadata or {}),
+                            "embedding": str(embeddings[i]),
+                            "metadata": json.dumps(doc.metadata),
                         })
 
                     if chunk_data_list:

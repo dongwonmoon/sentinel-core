@@ -16,7 +16,11 @@ pydantic-settings
 langchain-community
 langchain-text-splitters
 langchain-ollama
+langchain-openai
 langchain-experimental
 ollama
 unstructured # for loaders
 pypdf # for loaders
+
+markdown
+python-magic

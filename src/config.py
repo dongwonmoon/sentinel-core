@@ -3,9 +3,8 @@ from typing import Any, List, Literal, Optional, Tuple, Type
 import yaml
 from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
                                SettingsConfigDict)
-from pydantic import computed_field
+from pydantic import computed_field, Field
 
-# 1. YAML 설정 소스 함수 정의
 def yaml_config_settings_source() -> dict[str, Any]:
     """
     프로젝트 루트의 'config.yml' 파일을 읽어 Pydantic 설정 소스로 사용합니다.
@@ -16,85 +15,92 @@ def yaml_config_settings_source() -> dict[str, Any]:
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
-# 2. Settings 클래스 수정
 class Settings(BaseSettings):
     """
     애플리케이션의 모든 설정을 관리하는 Pydantic BaseSettings 클래스입니다.
-    YAML, 환경 변수, 기본값 순서로 설정을 로드합니다.
+    YAML, 환경 변수(.env), 기본값 순서로 설정을 로드합니다.
     """
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # --- 환경 변수(.env)로만 관리되어야 하는 민감 정보 ---
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
     
-    DB_HOST: str = "localhost"
-    DB_PORT: int = 5432
-    DB_USER: str = "admin"
-    POSTGRES_PASSWORD: str = "password"
-    DB_NAME: str = "sentinel_core_db"
+    # Redis 연결 정보
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
 
-    @computed_field
-    @property
-    def DATABASE_URL(self) -> str:
-        """
-        환경 변수에서 읽어들인 DB 컴포넌트를 조합하여
-        SQLAlchemy 비동기(asyncpg) URL을 생성합니다.
-        """
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-    
-    @computed_field
-    @property
-    def SYNC_DATABASE_URL(self) -> str:
-        """
-        Alembic 마이그레이션 및 동기 스크립트를 위한
-        'psycopg2' (동기) 드라이버 URL을 생성합니다.
-        """
-        return f"postgresql://{self.DB_USER}:{self.POSTGRES_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+    # API 키
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    COHERE_API_KEY: Optional[str] = None
+    GOOGLE_API_KEY: Optional[str] = None
+    GOOGLE_CSE_ID: Optional[str] = None
 
-    
-    @computed_field
-    @property
-    def CELERY_BROKER_URL(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+    # --- config.yml 또는 기본값으로 관리되는 일반 설정 ---
+    # 애플리케이션 정보
+    APP_TITLE: str = "Sentinel RAG System"
+    APP_DESCRIPTION: str = "Enterprise-grade RAG system with advanced capabilities."
+    LOG_LEVEL: str = "INFO"
 
-    @computed_field
-    @property
-    def CELERY_RESULT_BACKEND(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
-
+    # 벡터 스토어 설정
     VECTOR_STORE_TYPE: Literal["pg_vector", "milvus"] = "pg_vector"
     MILVUS_HOST: Optional[str] = None
     MILVUS_PORT: Optional[int] = None
-    
+
+    # LLM 설정
     LLM_TYPE: Literal["ollama", "openai", "anthropic"] = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL_NAME: str = "llama3"
     OLLAMA_TEMPERATURE: float = 0
     
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_MODEL_NAME: str = "gpt-4o"
+    OPENAI_API_BASE_URL: Optional[str] = "https://api.groq.com/openai/v1"
+    OPENAI_MODEL_NAME: str = "llama3-8b-8192"
     
-    ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_MODEL_NAME: str = "claude-3-opus-20240229"
     
+    # 임베딩 모델 설정
     EMBEDDING_MODEL_TYPE: Literal["ollama", "huggingface", "openai"] = "ollama"
-    OLLAMA_EMBEDDING_MODEL_NAME: str = "llama3"
+    OLLAMA_EMBEDDING_MODEL_NAME: str = "nomic-embed-text"
     HUGGINGFACE_EMBEDDING_MODEL_NAME: Optional[str] = "sentence-transformers/all-MiniLM-L6-v2"
     OPENAI_EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
     
+    # Reranker 설정
     RERANKER_TYPE: Literal["none", "cohere", "cross_encoder"] = "none"
-    COHERE_API_KEY: Optional[str] = None
     CROSS_ENCODER_MODEL_NAME: Optional[str] = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     
+    # 도구 설정
     TOOLS_ENABLED: List[Literal["duckduckgo_search", "google_search", "code_execution"]] = ["duckduckgo_search"]
-    GOOGLE_API_KEY: Optional[str] = None
-    GOOGLE_CSE_ID: Optional[str] = None
+
+    # --- 동적으로 계산되는 필드 ---
+    @computed_field
+    @property
+    def DATABASE_URL(self) -> str:
+        """SQLAlchemy 비동기(asyncpg) URL을 생성합니다."""
+        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
     
-    APP_TITLE: str = "Sentinel RAG System"
-    APP_DESCRIPTION: str = "Enterprise-grade RAG system with advanced capabilities."
-    LOG_LEVEL: str = "INFO"
+    @computed_field
+    @property
+    def SYNC_DATABASE_URL(self) -> str:
+        """Alembic을 위한 동기(psycopg2) 드라이버 URL을 생성합니다."""
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    @computed_field
+    @property
+    def CELERY_BROKER_URL(self) -> str:
+        """Celery 브로커 URL을 생성합니다."""
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
 
-    # 3. 커스텀 설정 소스 지정
+    @computed_field
+    @property
+    def CELERY_RESULT_BACKEND(self) -> str:
+        """Celery 결과 백엔드 URL을 생성합니다."""
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
+
+    # --- 설정 로드 순서 지정 ---
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -105,12 +111,7 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
         """
-        Pydantic이 설정을 읽어오는 소스의 순서를 재정의합니다.
-        1. init_settings: Settings() 호출 시 직접 전달된 인자
-        2. env_settings: 환경 변수
-        3. dotenv_settings: .env 파일
-        4. yaml_config_settings_source: config.yml 파일
-        5. file_secret_settings: Docker secrets 등 파일 기반 시크릿
+        설정 로드 우선순위: Pydantic 기본값 -> config.yml -> .env -> 환경 변수 -> 명시적 초기화 인자
         """
         return (
             init_settings,

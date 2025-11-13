@@ -10,11 +10,12 @@ from .rerankers.base import BaseReranker
 from .store.base import BaseVectorStore
 from .tools.base import BaseTool
 from .logger import get_logger
+from . import prompts
 
 logger = get_logger(__name__)
 
 
-# --- 1. '두뇌의 상태' 정의 (State) ---
+
 class AgentState(TypedDict):
     """
     LangGraph의 상태를 정의하는 TypedDict입니다.
@@ -26,11 +27,12 @@ class AgentState(TypedDict):
 
     tool_choice: str  # 라우터가 결정한 도구 이름 ("RAG", "WebSearch", "None")
     tool_outputs: Dict[str, Any]  # 각 도구의 실행 결과를 저장하는 딕셔너리
-
+    code_input: Optional[str] = None
+    
     answer: str  # 최종 답변
 
 
-# --- 2. LLM이 '라우터'에서 사용할 도구 선택 양식 ---
+
 class ToolRouter(BaseModel):
     """사용자의 질문에 답하기 위해 사용할 도구를 결정하는 Pydantic 모델입니다."""
     tool_choice: Literal["RAG", "WebSearch", "CodeExecution", "None"] = Field(
@@ -39,7 +41,7 @@ class ToolRouter(BaseModel):
     )
 
 
-# --- 3. '두뇌' 구축 클래스 ---
+
 class AgentBrain:
     """
     LangGraph를 사용하여 RAG, 웹 검색, 일반 대화를 조정하는 에이전트의 핵심 로직을 담당합니다.
@@ -74,7 +76,7 @@ class AgentBrain:
         # LangGraph 워크플로우를 빌드하고 컴파일합니다.
         self.graph_app = self._build_graph()
 
-    # --- 4. '두뇌의 작업 단계' 정의 (Nodes) ---
+    
 
     async def _route_query(self, state: AgentState) -> Dict[str, Any]:
         """LLM을 이용해 질문을 분석하고 사용할 도구를 비동기적으로 결정합니다."""
@@ -86,18 +88,23 @@ class AgentBrain:
         
         try:
             # LLM을 호출하여 질문에 가장 적합한 도구를 선택
-            router_result = await structured_llm.ainvoke([
-                HumanMessage(content=f"""
-                    질문을 분석하여 다음 중 어떤 도구를 사용해야 할지 결정하세요.
-                    - 사내 정책, 내부 프로젝트, 회사 규정 등 내부 정보: 'RAG'
-                    - 최신 뉴스, 실시간 정보, 외부 지식: 'WebSearch'
-                    - 수학 계산, 데이터 분석, 코드 실행 요청: 'CodeExecution'
-                    - 단순 인사, 일반 대화: 'None'
-                    
-                    질문: {question}
-                """)
-            ])
-            tool_choice = router_result.tool_choice
+            prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(question=question)
+            response = await self.llm.invoke(
+                messages=[HumanMessage(content=prompt)],
+                config={},
+            )
+            logger.info(f"라우터 출력: {response.content}")
+            
+            response_text = response.content.strip()
+
+            tool_choice = "None" # 기본값
+            if "[RAG]" in response_text:
+                tool_choice = "RAG"
+            elif "[WebSearch]" in response_text:
+                tool_choice = "WebSearch"
+            elif "[CodeExecution]" in response_text:
+                tool_choice = "CodeExecution"
+            
         except Exception as e:
             # 구조화된 출력에 실패할 경우, 일반 대화로 fallback
             logger.warning(f"라우팅 실패 ({e}). 'None'으로 fallback합니다.")
@@ -157,13 +164,22 @@ class AgentBrain:
         if not code_tool:
             return {"tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}}
 
+        logger.debug(f"--- Code Gen 프롬프트 전송... ---")
+        code_gen_response = await self.llm.invoke(
+            messages=[HumanMessage(content=prompts.CODE_GEN_PROMPT.format(question=question))],
+            config={},
+        )
+        
+        code_to_run = code_gen_response.content.strip().replace("```python", "```").replace("```", "")
+        logger.info(f"--- 실행할 코드 생성:\n{code_to_run}\n---")
+        
         import asyncio
         code_result = await asyncio.to_thread(code_tool.run, tool_input=question)
         
         # tool_outputs에 'code_result' 키로 저장
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result) # 결과를 문자열로 저장
-        return {"tool_outputs": tool_outputs}
+        return {"tool_outputs": tool_outputs, "code_input": code_to_run}
 
     async def _generate_final_answer(self, state: AgentState) -> AsyncIterator[Dict[str, Any]]:
         """모든 도구의 결과를 취합하여 최종 답변을 비동기 스트리밍으로 생성합니다."""
@@ -176,6 +192,8 @@ class AgentBrain:
         context = ""
         rag_chunks = tool_outputs.get("rag_chunks")
         search_result = tool_outputs.get("search_result")
+        
+        code_input = state.get("code_input")
         code_result = tool_outputs.get("code_result")
 
         if tool_choice == "RAG" and rag_chunks:
@@ -185,32 +203,22 @@ class AgentBrain:
         elif tool_choice == "WebSearch" and search_result:
             context = f"[웹 검색 결과]\n{search_result}"
         elif tool_choice == "CodeExecution" and code_result:
-            context = f"[코드 실행 결과]\n{code_result}"
+            context = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
         elif tool_choice == "None":
             context = "도움말: 일반 대화 모드입니다."
         else:
             context = "도움말: 관련 정보를 찾지 못했습니다."
 
         # 2. 프롬프트 생성 및 LLM 스트리밍 호출
-        messages = [HumanMessage(content=f"""
-            당신은 질문에 답변하는 AI 어시스턴트입니다.
-            제공된 '컨텍스트'를 최우선으로 참고하여 답변하세요.
-            '컨텍스트'가 '관련 정보를 찾지 못했습니다'이거나, 내용이 없다면
-            "정보를 찾지 못했습니다"라고 답변하세요.
-
-            [컨텍스트]
-            {context}
-
-            [질문]
-            {question}
-
-            [답변]
-        """)]
+        messages = [HumanMessage(content=prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
+            context=context,
+            question=question
+        ))]
         
         async for chunk in self.llm.stream(messages, config={}):
             yield {"answer": chunk.content}
 
-    # --- 5. '작업 순서' 정의 (Graph Assembly) ---
+    
 
     def _decide_branch(self, state: AgentState) -> Literal["RAG", "WebSearch", "CodeExecution", "None"]:
         """라우터의 결정('tool_choice')에 따라 그래프를 분기합니다."""

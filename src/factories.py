@@ -3,8 +3,10 @@ from typing import List
 from .config import Settings
 from .embeddings.base import BaseEmbeddingModel
 from .embeddings.ollama import OllamaEmbedding
+from .embeddings.openai import OpenAIEmbedding
 from .llms.base import BaseLLM
 from .llms.ollama import OllamaLLM
+from .llms.openai import OpenAILLM
 from .rerankers.base import BaseReranker
 from .rerankers.noop_reranker import NoOpReranker
 from .store.base import BaseVectorStore
@@ -20,12 +22,16 @@ def get_embedding_model(s: Settings) -> BaseEmbeddingModel:
     """설정에 맞는 임베딩 모델 인스턴스를 생성합니다."""
     if s.EMBEDDING_MODEL_TYPE == "ollama":
         return OllamaEmbedding(settings=s)
+    elif s.EMBEDDING_MODEL_TYPE == "openai":
+        return OpenAIEmbedding(settings=s)
     raise ValueError(f"Unsupported embedding model type: {s.EMBEDDING_MODEL_TYPE}")
 
 def get_llm(s: Settings) -> BaseLLM:
     """설정에 맞는 LLM 인스턴스를 생성합니다."""
     if s.LLM_TYPE == "ollama":
         return OllamaLLM(settings=s)
+    elif s.LLM_TYPE == "openai":
+        return OpenAILLM(settings=s)
     raise ValueError(f"Unsupported LLM type: {s.LLM_TYPE}")
 
 def get_vector_store(s: Settings, embedding_model: BaseEmbeddingModel) -> BaseVectorStore:

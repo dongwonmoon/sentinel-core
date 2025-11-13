@@ -13,8 +13,10 @@ from .agent_brain import AgentBrain
 from .config import Settings, settings
 from .embeddings.base import BaseEmbeddingModel
 from .embeddings.ollama import OllamaEmbedding
+from .embeddings.openai import OpenAIEmbedding
 from .llms.base import BaseLLM
 from .llms.ollama import OllamaLLM
+from .llms.openai import OpenAILLM
 from .rerankers.base import BaseReranker
 from .rerankers.noop_reranker import NoOpReranker
 from .store.base import BaseVectorStore
@@ -128,8 +130,16 @@ async def stream_agent_response(
         sources = [Source(**chunk) for chunk in rag_chunks]
         # 클라이언트에 'sources' 이벤트 전송
         yield f"data: {json.dumps({'event': 'sources', 'data': [s.dict() for s in sources]})}\n\n"
+        
+        search_result = tool_outputs.get("search_result", "")
+        code_result = tool_outputs.get("code_result", "")
+        code_input = final_state.get("code_input", "")
 
-    # 스트리밍 종료를 알리는 'end' 이벤트 전송
+        if search_result:
+            yield f"data: {json.dumps({'event': 'search_result', 'data': search_result})}\n\n"
+        if code_result or code_input:
+            yield f"data: {json.dumps({'event': 'code_result', 'data': {'input': code_input, 'output': code_result}})}\n\n"
+
     yield f"data: {json.dumps({'event': 'end'})}\n\n"
 
 

@@ -1,19 +1,17 @@
 # 이 파일에서 애플리케이션의 모든 설정을 관리합니다.
 
 # --- 데이터베이스 및 벡터 스토어 설정 ---
-DATABASE_URL: "postgresql+asyncpg://user:password@localhost:5432/sentinel"
 VECTOR_STORE_TYPE: "pg_vector" # "pg_vector" 또는 "milvus"
 MILVUS_HOST: null
 MILVUS_PORT: null
 
 # --- LLM (Large Language Model) 설정 ---
-LLM_TYPE: "ollama" # "ollama", "openai", "anthropic"
+LLM_TYPE: "openai" # "ollama", "openai", "anthropic"
 OLLAMA_BASE_URL: "http://localhost:11434"
 OLLAMA_MODEL_NAME: "gemma3:1b"
 OLLAMA_TEMPERATURE: 0
-OPENAI_API_KEY: null
-OPENAI_MODEL_NAME: "gpt-4o"
-ANTHROPIC_API_KEY: null
+OPENAI_API_BASE_URL: "https://api.groq.com/openai/v1"
+OPENAI_MODEL_NAME: "groq/compound"
 ANTHROPIC_MODEL_NAME: "claude-3-opus-20240229"
 
 # --- 임베딩 모델 설정 ---
@@ -24,7 +22,6 @@ OPENAI_EMBEDDING_MODEL_NAME: "text-embedding-3-small"
 
 # --- Reranker 설정 ---
 RERANKER_TYPE: "none" # "none", "cohere", "cross_encoder"
-COHERE_API_KEY: null
 CROSS_ENCODER_MODEL_NAME: "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 # --- 도구 (Tools) 설정 ---
@@ -32,12 +29,6 @@ TOOLS_ENABLED:
   - "duckduckgo_search"
   - "code_execution"
 #  - "google_search"
-GOOGLE_API_KEY: null
-GOOGLE_CSE_ID: null
-
-# --- Celery 설정 ---
-CELERY_BROKER_URL: "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND: "redis://localhost:6379/0"
 
 # --- 기타 설정 ---
 APP_TITLE: "Sentinel RAG System"

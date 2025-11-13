@@ -5,9 +5,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: sentinel_core_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: always
@@ -23,7 +23,7 @@ services:
       context: dockerfiles/.
       dockerfile: Dockerfile.api
     container_name: sentinel_api
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     volumes:
@@ -35,9 +35,9 @@ services:
     environment:
       - DB_HOST=db
       - DB_PORT=5432
-      - DB_USER=admin
-      - POSTGRES_PASSWORD=password
-      - DB_NAME=sentinal_core_db
+      - DB_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
       - REDIS_HOST=redis
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: always
@@ -57,9 +57,9 @@ services:
     environment:
       - DB_HOST=db
       - DB_PORT=5432
-      - DB_USER=admin
-      - POSTGRES_PASSWORD=password
-      - DB_NAME=sentinal_core_db
+      - DB_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
       - REDIS_HOST=redis
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: always
