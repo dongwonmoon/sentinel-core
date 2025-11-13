@@ -25,10 +25,18 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column(
-            "user_id", sa.BIGINT(), sa.Identity(), nullable=False, primary_key=True
+            "user_id",
+            sa.BIGINT(),
+            sa.Identity(),
+            nullable=False,
+            primary_key=True,
         ),
         sa.Column(
-            "username", sa.VARCHAR(length=100), nullable=False, unique=True, index=True
+            "username",
+            sa.VARCHAR(length=100),
+            nullable=False,
+            unique=True,
+            index=True,
         ),
         sa.Column("hashed_password", sa.TEXT(), nullable=False),
         # [핵심] 사용자의 권한 그룹을 저장할 컬럼
@@ -45,7 +53,10 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column(
-            "is_active", sa.BOOLEAN(), server_default=sa.text("true"), nullable=False
+            "is_active",
+            sa.BOOLEAN(),
+            server_default=sa.text("true"),
+            nullable=False,
         ),
     )
 

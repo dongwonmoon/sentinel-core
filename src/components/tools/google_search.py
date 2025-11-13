@@ -1,6 +1,6 @@
 from .base import BaseTool
-from ..config import Settings
-from ..logger import get_logger
+from ...core.config import Settings
+from ...core.logger import get_logger
 
 logger = get_logger(__name__)
 

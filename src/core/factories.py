@@ -2,6 +2,7 @@
 설정(config)에 따라 각 컴포넌트의 실제 구현체를 생성하는 팩토리 함수들의 모음입니다.
 이 함수들은 의존성 주입 시스템(dependencies.py)에서 사용됩니다.
 """
+
 from typing import List, Optional
 
 # --- 1. 설정 모델 및 컴포넌트 기반 클래스 임포트 ---
@@ -21,6 +22,7 @@ from ..components.tools.base import BaseTool
 
 # --- 2. 팩토리 함수 정의 ---
 
+
 def create_llm(
     llm_settings: LLMSettings,
     # 필요한 API 키는 의존성 주입 시 외부에서 전달받음
@@ -30,6 +32,7 @@ def create_llm(
     """설정에 맞는 LLM 인스턴스를 생성합니다."""
     if llm_settings.provider == "ollama":
         from ..components.llms.ollama import OllamaLLM
+
         return OllamaLLM(
             base_url=llm_settings.api_base,
             model_name=llm_settings.model_name,
@@ -37,6 +40,7 @@ def create_llm(
         )
     elif llm_settings.provider == "openai":
         from ..components.llms.openai import OpenAILLM
+
         return OpenAILLM(
             base_url=llm_settings.api_base,
             model_name=llm_settings.model_name,
@@ -56,17 +60,20 @@ def create_embedding_model(
     """설정에 맞는 임베딩 모델 인스턴스를 생성합니다."""
     if embedding_settings.provider == "ollama":
         from ..components.embeddings.ollama import OllamaEmbedding
+
         return OllamaEmbedding(model_name=embedding_settings.model_name)
     elif embedding_settings.provider == "openai":
         from ..components.embeddings.openai import OpenAIEmbedding
+
         return OpenAIEmbedding(
-            model_name=embedding_settings.model_name,
-            api_key=openai_api_key
+            model_name=embedding_settings.model_name, api_key=openai_api_key
         )
     # (필요 시) HuggingFace 등 다른 프로바이더 추가
     # elif embedding_settings.provider == "huggingface":
     #     ...
-    raise ValueError(f"Unsupported embedding provider: {embedding_settings.provider}")
+    raise ValueError(
+        f"Unsupported embedding provider: {embedding_settings.provider}"
+    )
 
 
 def create_vector_store(
@@ -78,11 +85,21 @@ def create_vector_store(
     """설정에 맞는 벡터 스토어 인스턴스를 생성합니다."""
     if vs_settings.provider == "pg_vector":
         from ..components.vector_stores.pg_vector_store import PgVectorStore
-        return PgVectorStore(settings=full_settings, embedding_model=embedding_model)
+
+        return PgVectorStore(
+            settings=full_settings, embedding_model=embedding_model
+        )
     if vs_settings.provider == "milvus":
-        from ..components.vector_stores.milvus_vector_store import MilvusVectorStore
-        return MilvusVectorStore(settings=full_settings, embedding_model=embedding_model)
-    raise ValueError(f"Unsupported vector store provider: {vs_settings.provider}")
+        from ..components.vector_stores.milvus_vector_store import (
+            MilvusVectorStore,
+        )
+
+        return MilvusVectorStore(
+            settings=full_settings, embedding_model=embedding_model
+        )
+    raise ValueError(
+        f"Unsupported vector store provider: {vs_settings.provider}"
+    )
 
 
 def create_reranker(
@@ -92,28 +109,36 @@ def create_reranker(
     """설정에 맞는 Reranker 인스턴스를 생성합니다."""
     if reranker_settings.provider == "none":
         from ..components.rerankers.noop_reranker import NoOpReranker
+
         return NoOpReranker()
     if reranker_settings.provider == "cross_encoder":
         # 이 방식은 모델을 직접 다운로드하므로 API 키가 필요 없음
         from sentence_transformers import CrossEncoder
+
         return CrossEncoder(reranker_settings.model_name, max_length=512)
     # (필요 시) Cohere 등 다른 프로바이더 추가
     # elif reranker_settings.provider == "cohere":
     #     ...
-    raise ValueError(f"Unsupported reranker provider: {reranker_settings.provider}")
+    raise ValueError(
+        f"Unsupported reranker provider: {reranker_settings.provider}"
+    )
 
 
 def get_tools(enabled_tools_config: List[str]) -> List[BaseTool]:
     """설정에 따라 활성화된 도구 목록을 생성합니다."""
     enabled_tools = []
     if "duckduckgo_search" in enabled_tools_config:
-        from ..components.tools.duckduckgo_search import get_duckduckgo_search_tool
+        from ..components.tools.duckduckgo_search import (
+            get_duckduckgo_search_tool,
+        )
+
         enabled_tools.append(get_duckduckgo_search_tool())
 
     if "code_execution" in enabled_tools_config:
         from ..components.tools.code_execution import get_code_execution_tool
+
         enabled_tools.append(get_code_execution_tool())
-        
+
     # (필요 시) Google Search 등 다른 도구 추가
     # if "google_search" in enabled_tools_config:
     #     ...

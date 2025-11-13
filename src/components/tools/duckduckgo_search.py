@@ -1,6 +1,6 @@
 from langchain_community.tools import DuckDuckGoSearchRun
 from .base import BaseTool
-from ..logger import get_logger
+from ...core.logger import get_logger
 
 logger = get_logger(__name__)
 

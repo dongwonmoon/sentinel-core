@@ -5,7 +5,7 @@ from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 
 from .base import BaseLLM
-from src.config import Settings
+from ...core.config import Settings
 
 
 class OpenAILLM(BaseLLM):
@@ -43,5 +43,7 @@ class OpenAILLM(BaseLLM):
         async for chunk in self.client.astream(messages, config=config):
             yield chunk
 
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         return await self.client.ainvoke(messages, config=config)

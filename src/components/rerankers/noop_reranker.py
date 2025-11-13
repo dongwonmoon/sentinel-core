@@ -1,7 +1,7 @@
 from typing import List, Tuple
 from langchain_core.documents import Document
 from .base import BaseReranker
-from ..logger import get_logger
+from ...core.logger import get_logger
 
 logger = get_logger(__name__)
 

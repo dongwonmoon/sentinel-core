@@ -2,9 +2,11 @@
 FastAPI 애플리케이션의 메인 진입점(Entrypoint)입니다.
 - FastAPI 앱 인스턴스 생성
 - 각 엔드포인트 라우터(endpoints) 등록
-- (필요 시) CORS 등 미들웨어 설정
+- CORS 등 미들웨어 설정
 """
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from ..core.config import settings
 from .endpoints import auth, chat, documents
 
@@ -12,7 +14,18 @@ from .endpoints import auth, chat, documents
 app = FastAPI(
     title=settings.app.title,
     description=settings.app.description,
-    version="1.0.0", # 버전 업데이트
+    version="1.0.0",
+)
+
+# --- CORS 미들웨어 설정 ---
+# 개발 환경을 위해 모든 출처, 메소드, 헤더를 허용합니다.
+# 프로덕션 환경에서는 origins 목록을 실제 프론트엔드 주소로 제한해야 합니다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 모든 출처 허용
+    allow_credentials=True,
+    allow_methods=["*"],  # 모든 HTTP 메소드 허용
+    allow_headers=["*"],  # 모든 HTTP 헤더 허용
 )
 
 # --- 라우터 등록 ---
@@ -26,7 +39,3 @@ app.include_router(documents.router)
 async def read_root():
     """루트 엔드포인트. API 서버가 정상적으로 동작하는지 확인합니다."""
     return {"message": f"Welcome to {settings.app.title}"}
-
-# (필요 시) 여기에 CORS 미들웨어 등을 추가할 수 있습니다.
-# from fastapi.middleware.cors import CORSMiddleware
-# app.add_middleware(...)

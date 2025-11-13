@@ -12,6 +12,7 @@ import {
   ListItemText,
   IconButton,
   Button,
+  ListItemButton, // Add ListItemButton
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
@@ -20,12 +21,13 @@ import MenuIcon from '@mui/icons-material/Menu';
 import { useAuth } from '../context/AuthContext';
 
 interface ConversationSidebarProps {
+  onNewChat: () => void;
   mobileOpen: boolean;
   handleDrawerToggle: () => void;
   drawerWidth: number;
 }
 
-export default function ConversationSidebar({ mobileOpen, handleDrawerToggle, drawerWidth }: ConversationSidebarProps) {
+export default function ConversationSidebar({ onNewChat, mobileOpen, handleDrawerToggle, drawerWidth }: ConversationSidebarProps) {
   const { user, logout } = useAuth();
 
   // Placeholder for conversation sessions
@@ -52,33 +54,33 @@ export default function ConversationSidebar({ mobileOpen, handleDrawerToggle, dr
       </Toolbar>
       <Divider />
       <List>
-        <ListItem>
+        <ListItemButton>
           <Button
             variant="contained"
             color="primary"
             fullWidth
             startIcon={<AddIcon />}
-            // TODO: Implement new chat logic
+            onClick={onNewChat}
           >
             New Chat
           </Button>
-        </ListItem>
+        </ListItemButton>
       </List>
       <Divider />
       <List>
         {conversationSessions.map((session) => (
-          <ListItem button key={session.id}>
+          <ListItemButton key={session.id}>
             <ChatBubbleOutlineIcon sx={{ mr: 2 }} />
             <ListItemText primary={session.title} secondary={session.date} />
-          </ListItem>
+          </ListItemButton>
         ))}
       </List>
       <Box sx={{ position: 'absolute', bottom: 0, width: `calc(${drawerWidth}px - 16px)`, p: 2 }}>
         <Divider sx={{ mb: 1 }} />
-        <ListItem button onClick={logout}>
+        <ListItemButton onClick={logout}>
           <LogoutIcon sx={{ mr: 2 }} />
           <ListItemText primary={`Logout (${user?.username || 'User'})`} />
-        </ListItem>
+        </ListItemButton>
       </Box>
     </Box>
   );

@@ -4,6 +4,7 @@ API 라우터: 채팅 (Chat)
 - /chat/history: 이전 대화 기록 조회
 - /chat/message: 대화 메시지 저장
 """
+
 import json
 from typing import AsyncGenerator
 
@@ -31,7 +32,7 @@ async def _stream_agent_response(
     """
     final_answer = ""
     sources = []
-    
+
     # Agent의 새로운 메인 메서드 `stream_response`를 호출합니다.
     # 이 메서드는 답변 생성 스트림과 감사 로그 저장을 모두 처리합니다.
     async for event in agent.stream_response(inputs, db_session):
@@ -43,7 +44,7 @@ async def _stream_agent_response(
             if content:
                 final_answer += content
                 yield f"data: {json.dumps({'event': 'token', 'data': content})}\\n\n"
-        
+
         # 그래프 실행이 끝나면, 최종 상태에서 출처(sources) 정보를 추출하여 전송
         elif kind == "on_graph_end":
             final_state = event["data"]["output"]
@@ -51,7 +52,7 @@ async def _stream_agent_response(
                 tool_outputs = final_state.get("tool_outputs", {})
                 rag_chunks = tool_outputs.get("rag_chunks", [])
                 sources = [schemas.Source(**chunk) for chunk in rag_chunks]
-                
+
                 if sources:
                     sources_dict = [s.dict() for s in sources]
                     yield f"data: {json.dumps({'event': 'sources', 'data': sources_dict})}\\n\n"
@@ -63,8 +64,8 @@ async def _stream_agent_response(
     if final_answer:
         await _save_chat_message(
             schemas.ChatMessageBase(role="assistant", content=final_answer),
-            db_session=db_session,
-            user_id=inputs["user_id"], # HACK: user_id를 inputs에서 가져옴
+            session=db_session,
+            user_id=inputs["user_id"],  # HACK: user_id를 inputs에서 가져옴
         )
 
 
@@ -81,7 +82,7 @@ async def query_agent(
     # 사용자 메시지를 먼저 DB에 저장
     await _save_chat_message(
         schemas.ChatMessageBase(role="user", content=body.query),
-        db_session=db_session,
+        session=db_session,
         user_id=current_user.user_id,
     )
 
@@ -90,8 +91,12 @@ async def query_agent(
         "permission_groups": current_user.permission_groups,
         "top_k": body.top_k,
         "doc_ids_filter": body.doc_ids_filter,
-        "chat_history": [msg.dict() for msg in body.chat_history] if body.chat_history else [],
-        "user_id": current_user.user_id, # HACK: 감사 로그 및 메시지 저장용
+        "chat_history": (
+            [msg.dict() for msg in body.chat_history]
+            if body.chat_history
+            else []
+        ),
+        "user_id": current_user.user_id,  # HACK: 감사 로그 및 메시지 저장용
     }
 
     return StreamingResponse(
@@ -107,6 +112,7 @@ async def get_chat_history(
 ):
     """현재 로그인한 사용자의 모든 채팅 기록을 시간순으로 가져옵니다."""
     from sqlalchemy import text
+
     stmt = text(
         """
         SELECT role, content, created_at 
@@ -127,6 +133,7 @@ async def _save_chat_message(
 ):
     """'user' 또는 'assistant'의 단일 메시지를 DB에 저장하는 헬퍼 함수."""
     from sqlalchemy import text
+
     try:
         stmt = text(
             """
@@ -136,7 +143,11 @@ async def _save_chat_message(
         )
         await session.execute(
             stmt,
-            {"user_id": user_id, "role": message.role, "content": message.content},
+            {
+                "user_id": user_id,
+                "role": message.role,
+                "content": message.content,
+            },
         )
     except Exception as e:
         # 이 함수는 스트림의 일부로 호출되므로, 실패 시 HTTP 예외를 발생시키지 않고 로깅만 합니다.

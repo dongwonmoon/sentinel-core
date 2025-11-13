@@ -72,9 +72,11 @@ services:
     container_name: sentinel_ui_frontend
     ports:
       - "3000:3000" # Next.js default port
-    environment:
-      # NEXT_PUBLIC_ prefix is required for Next.js client-side environment variables
-      NEXT_PUBLIC_API_BASE_URL: http://api:8000
+    # environment:
+      # NEXT_PUBLIC_API_BASE_URL is now handled by the default in apiClient.ts
+      # which correctly points to http://localhost:8000 for browser access.
+      # We only need the AUTH_SECRET_KEY for the old UI, which is now removed.
+      # This can be cleaned up further, but for now, we leave it empty.
     depends_on:
       - api
     restart: always

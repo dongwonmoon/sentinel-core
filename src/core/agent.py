@@ -2,6 +2,7 @@
 핵심 에이전트(Agent) 로직을 담당하는 모듈입니다.
 LangGraph를 사용하여 RAG, 웹 검색, 코드 실행 등 다양한 도구를 조정합니다.
 """
+
 import json
 from typing import TypedDict, List, Dict, Any, AsyncIterator, Literal, Optional
 
@@ -24,10 +25,12 @@ logger = get_logger(__name__)
 
 # --- 2. Agent 상태 및 유틸리티 함수 정의 ---
 
+
 class AgentState(TypedDict):
     """
     LangGraph의 상태를 정의합니다. 그래프의 각 노드를 거치며 이 상태가 업데이트됩니다.
     """
+
     # 입력
     question: str
     permission_groups: List[str]
@@ -60,6 +63,7 @@ def _convert_history_dicts_to_messages(
 
 # --- 3. 핵심 Agent 클래스 ---
 
+
 class Agent:
     """
     LangGraph를 사용하여 RAG, 웹 검색 등을 조정하는 에이전트의 핵심 로직.
@@ -89,7 +93,9 @@ class Agent:
         self.vector_store = vector_store
         self.reranker = reranker
         self.tools = {tool.name: tool for tool in tools}
-        logger.info(f"Agent 초기화 완료. 사용 가능 도구: {list(self.tools.keys())}")
+        logger.info(
+            f"Agent 초기화 완료. 사용 가능 도구: {list(self.tools.keys())}"
+        )
 
         # LangGraph 워크플로우 빌드 및 컴파일
         self.graph_app = self._build_graph()
@@ -97,9 +103,7 @@ class Agent:
     # --- 3-1. 새로운 Public 메서드 (API 계층에서 호출) ---
 
     async def stream_response(
-        self,
-        inputs: Dict[str, Any],
-        db_session: AsyncSession
+        self, inputs: Dict[str, Any], db_session: AsyncSession
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         답변 생성을 스트리밍하고, 완료 후 감사 로그를 저장하는 새로운 메인 메서드.
@@ -108,7 +112,7 @@ class Agent:
         # LangGraph의 astream_events를 사용하여 각 노드의 이벤트를 스트리밍
         async for event in self.graph_app.astream_events(inputs, version="v1"):
             yield event  # 이벤트를 호출자(API 엔드포인트)에게 그대로 전달
-            
+
             # 스트림의 마지막 이벤트에서 최종 상태를 저장
             if event["event"] == "on_graph_end":
                 final_state = event["data"]["output"]
@@ -126,10 +130,12 @@ class Agent:
         최종 상태와 DB 세션을 받아 감사 로그를 비동기적으로 저장합니다.
         """
         logger.debug("--- [Agent Side-Effect: Save Audit Log] ---")
-        
+
         try:
             # 상태 객체를 JSON으로 직렬화
-            state_json_str = json.dumps(state, default=str) # datetime 등 직렬화 안되는 타입 에러 방지
+            state_json_str = json.dumps(
+                state, default=str
+            )  # datetime 등 직렬화 안되는 타입 에러 방지
         except TypeError as e:
             logger.error(f"AgentState 직렬화 실패: {e}. 일부만 저장합니다.")
             state_json_str = json.dumps({"error": "state serialization failed"})
@@ -145,6 +151,7 @@ class Agent:
         }
 
         from sqlalchemy import text
+
         async with db_session.begin():
             stmt = text(
                 """
@@ -154,9 +161,8 @@ class Agent:
                 """
             )
             await db_session.execute(stmt, log_data)
-        
-        logger.info(f"감사 로그 저장 완료 (Q: {log_data['question'][:20]}...)")
 
+        logger.info(f"감사 로그 저장 완료 (Q: {log_data['question'][:20]}...)")
 
     # --- 3-2. LangGraph 노드 정의 ---
 
@@ -167,26 +173,46 @@ class Agent:
         """
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
-        history = _convert_history_dicts_to_messages(state.get("chat_history", []))
+        history = _convert_history_dicts_to_messages(
+            state.get("chat_history", [])
+        )
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
             history="\n".join([f"{m.type}: {m.content}" for m in history]),
             question=question,
         )
 
-        response = await self.llm_fast.invoke([HumanMessage(content=prompt)])
-        
+        response = await self.llm_fast.invoke(
+            [HumanMessage(content=prompt)], config={}
+        )
+
         # LLM의 응답을 파싱하여 라우팅 결정 (오류에 취약할 수 있음)
         try:
-            decision_text = response.content.strip().replace("[", "").replace("]", "")
-            llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
-            chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
-            tool_choice = tool_part if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"] else "None"
+            decision_text = (
+                response.content.strip().replace("[", "").replace("]", "")
+            )
+            llm_part, tool_part = [
+                part.strip() for part in decision_text.split(",")
+            ]
+            chosen_llm = (
+                "powerful" if "powerful" in llm_part.lower() else "fast"
+            )
+            tool_choice = (
+                tool_part
+                if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]
+                else "None"
+            )
         except Exception as e:
-            logger.warning(f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback.")
+            logger.warning(
+                f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback."
+            )
             chosen_llm, tool_choice = "fast", "None"
 
         logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 도구: {tool_choice}")
-        return {"chosen_llm": chosen_llm, "tool_choice": tool_choice, "tool_outputs": {}}
+        return {
+            "chosen_llm": chosen_llm,
+            "tool_choice": tool_choice,
+            "tool_outputs": {},
+        }
 
     async def _run_rag_tool(self, state: AgentState) -> Dict[str, Any]:
         """[노드] 'RAG' 도구를 실행합니다 (Retrieve -> Rerank)."""
@@ -202,8 +228,15 @@ class Agent:
 
         reranked = self.reranker.rerank(state["question"], retrieved)
         final_docs = reranked[: state["top_k"]]
-        
-        dict_docs = [{"page_content": doc.page_content, "metadata": doc.metadata, "score": score} for doc, score in final_docs]
+
+        dict_docs = [
+            {
+                "page_content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": score,
+            }
+            for doc, score in final_docs
+        ]
         return {"tool_outputs": {"rag_chunks": dict_docs}}
 
     async def _run_web_search_tool(self, state: AgentState) -> Dict[str, Any]:
@@ -211,28 +244,45 @@ class Agent:
         logger.debug("--- [Agent Node: WebSearch Tool] ---")
         tool = self.tools.get("duckduckgo_search")
         if not tool:
-            return {"tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}}
-        
+            return {
+                "tool_outputs": {
+                    "search_result": "웹 검색 도구가 설정되지 않았습니다."
+                }
+            }
+
         result = await tool.arun(tool_input=state["question"])
         return {"tool_outputs": {"search_result": result}}
 
-    async def _run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
+    async def _run_code_execution_tool(
+        self, state: AgentState
+    ) -> Dict[str, Any]:
         """[노드] 'CodeExecution' 도구를 실행합니다."""
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
-            return {"tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}}
+            return {
+                "tool_outputs": {
+                    "code_result": "코드 실행 도구가 설정되지 않았습니다."
+                }
+            }
 
         # 1. Powerful LLM으로 실행할 코드 생성
-        code_gen_prompt = prompts.CODE_GEN_PROMPT.format(question=state["question"])
-        response = await self.llm_powerful.invoke([HumanMessage(content=code_gen_prompt)])
-        code_to_run = response.content.strip().replace("```python", "").replace("```", "")
+        code_gen_prompt = prompts.CODE_GEN_PROMPT.format(
+            question=state["question"]
+        )
+        response = await self.llm_powerful.invoke(
+            [HumanMessage(content=code_gen_prompt)]
+        )
+        code_to_run = (
+            response.content.strip().replace("```python", "").replace("```", "")
+        )
         logger.info(f"--- 실행할 코드 생성:\n{code_to_run}\n---")
 
         # 2. 생성된 코드 실행 (동기 함수이므로 스레드에서 실행)
         import asyncio
+
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
-        
+
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result)
         return {"tool_outputs": tool_outputs, "code_input": code_to_run}
@@ -240,27 +290,49 @@ class Agent:
     async def _generate_final_answer(self, state: AgentState) -> Dict[str, Any]:
         """[노드] 모든 컨텍스트를 종합하여 최종 답변을 생성합니다."""
         logger.debug("--- [Agent Node: Generate Final Answer] ---")
-        llm = self.llm_powerful if state.get("chosen_llm") == "powerful" else self.llm_fast
-        
+        llm = (
+            self.llm_powerful
+            if state.get("chosen_llm") == "powerful"
+            else self.llm_fast
+        )
+
         # 컨텍스트 구성
         context_str = ""
-        if state["tool_choice"] == "RAG" and state["tool_outputs"].get("rag_chunks"):
-            docs = [chunk["page_content"] for chunk in state["tool_outputs"]["rag_chunks"]]
+        tool_choice = state.get("tool_choice")
+        tool_outputs = state.get("tool_outputs", {})
+
+        if tool_choice == "RAG" and tool_outputs.get("rag_chunks"):
+            docs = [
+                chunk["page_content"] for chunk in tool_outputs["rag_chunks"]
+            ]
             context_str = "[사내 RAG 정보]\n" + "\n\n---\n\n".join(docs)
-        # ... 다른 도구 결과에 대한 컨텍스트 구성 ...
-        
-        history = _convert_history_dicts_to_messages(state.get("chat_history", []))
+        elif tool_choice == "WebSearch" and tool_outputs.get("search_result"):
+            context_str = f"[웹 검색 결과]\n{tool_outputs['search_result']}"
+        elif tool_choice == "CodeExecution" and tool_outputs.get("code_result"):
+            code_input = state.get("code_input", "")
+            code_result = tool_outputs.get("code_result", "")
+            context_str = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+        elif tool_choice == "None":
+            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+        else:
+            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+
+        history = _convert_history_dicts_to_messages(
+            state.get("chat_history", [])
+        )
         prompt = prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
-            context=context_str, question=state["question"]
+            context=context_str,
+            question=state["question"],
+            permission_groups=state["permission_groups"],
         )
         messages = history + [HumanMessage(content=prompt)]
 
         # 답변 스트리밍
         full_answer = ""
-        async for chunk in llm.stream(messages):
+        async for chunk in llm.stream(messages, config={}):
             full_answer += chunk.content
             # 스트리밍 구현은 API 계층에서 이뤄지므로, 여기서는 최종 답변만 집계
-        
+
         return {"answer": full_answer}
 
     # --- 3-3. LangGraph 빌드 ---
@@ -277,7 +349,9 @@ class Agent:
         workflow.add_node("route_query", self._route_query)
         workflow.add_node("run_rag_tool", self._run_rag_tool)
         workflow.add_node("run_web_search_tool", self._run_web_search_tool)
-        workflow.add_node("run_code_execution_tool", self._run_code_execution_tool)
+        workflow.add_node(
+            "run_code_execution_tool", self._run_code_execution_tool
+        )
         workflow.add_node("generate_final_answer", self._generate_final_answer)
 
         # 엣지 연결
@@ -295,7 +369,7 @@ class Agent:
         workflow.add_edge("run_rag_tool", "generate_final_answer")
         workflow.add_edge("run_web_search_tool", "generate_final_answer")
         workflow.add_edge("run_code_execution_tool", "generate_final_answer")
-        
+
         # 감사 로그 노드를 제거하고, 답변 생성 후 그래프가 종료되도록 변경
         workflow.add_edge("generate_final_answer", END)
 

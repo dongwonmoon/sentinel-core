@@ -16,6 +16,7 @@ import {
   CircularProgress,
   Alert,
   Box,
+  Typography,
 } from '@mui/material';
 import api, { DocumentItem } from '../lib/api';
 

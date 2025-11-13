@@ -6,10 +6,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from ..config import Settings
+from ...core.config import Settings
 from ..embeddings.base import BaseEmbeddingModel
 from .base import BaseVectorStore
-from ..logger import get_logger
+from ...core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -61,7 +61,9 @@ class PgVectorStore(BaseVectorStore):
         embeddings = self.embedding_model.embed_documents(
             [doc.page_content for doc in documents]
         )
-        doc_ids_to_clear = list(set(doc.metadata.get("doc_id") for doc in documents))
+        doc_ids_to_clear = list(
+            set(doc.metadata.get("doc_id") for doc in documents)
+        )
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():  # 트랜잭션 시작
@@ -122,7 +124,9 @@ class PgVectorStore(BaseVectorStore):
                             VALUES (:doc_id, :chunk_text, :embedding, :metadata)
                         """
                         )
-                        await session.execute(stmt_chunks_insert, chunk_data_list)
+                        await session.execute(
+                            stmt_chunks_insert, chunk_data_list
+                        )
 
                     logger.info(
                         f"{len(doc_infos)}개 문서, {len(documents)}개 청크 Upsert 완료."

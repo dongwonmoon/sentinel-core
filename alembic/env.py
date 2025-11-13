@@ -11,6 +11,7 @@ from alembic import context
 # 프로젝트 루트를 sys.path에 추가하여 'src' 모듈을 찾을 수 있도록 함
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
 from src.core.config import settings
+
 # --- End Integration ---
 
 # this is the Alembic Config object, which provides
@@ -47,7 +48,7 @@ def run_migrations_offline() -> None:
 
     """
     # url = config.get_main_option("sqlalchemy.url") # 기존 방식 비활성화
-    url = settings.SYNC_DATABASE_URL # 중앙 설정에서 URL 가져오기
+    url = settings.SYNC_DATABASE_URL  # 중앙 설정에서 URL 가져오기
     context.configure(
         url=url,
         target_metadata=target_metadata,

@@ -2,10 +2,10 @@ from typing import List, Tuple
 
 from langchain_core.documents import Document
 
-from ..config import Settings
+from ...core.config import Settings
 from ..embeddings.base import BaseEmbeddingModel
 from .base import BaseVectorStore
-from ..logger import get_logger
+from ...core.logger import get_logger
 
 logger = get_logger(__name__)
 

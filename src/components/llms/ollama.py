@@ -5,8 +5,8 @@ from langchain_core.runnables import Runnable
 from langchain_ollama.chat_models import ChatOllama
 
 from .base import BaseLLM
-from ..config import Settings
-from ..logger import get_logger
+from ...core.config import Settings
+from ...core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -56,7 +56,9 @@ class OllamaLLM(BaseLLM):
         async for chunk in self.client.astream(messages, config=config):
             yield chunk
 
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         Ollama 모델을 호출하여 전체 응답을 받습니다.
 

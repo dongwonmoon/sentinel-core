@@ -4,13 +4,23 @@ API 라우터: 문서 (Documents)
 - /upload-and-index: 파일 업로드 및 인덱싱
 - /index-github-repo: GitHub 저장소 인덱싱
 """
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    File,
+    UploadFile,
+    Form,
+)
 from sqlalchemy import text
 
 from .. import dependencies, schemas
 from ...worker import tasks
 from ...components.vector_stores.base import BaseVectorStore
 from ...components.vector_stores.pg_vector_store import PgVectorStore
+from ...core.agent import Agent
 
 
 router = APIRouter(
@@ -71,7 +81,7 @@ async def index_github_repo(
 @router.get("", response_model=dict[str, str])
 async def get_indexed_documents(
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
-    db_session = Depends(dependencies.get_db_session),
+    db_session=Depends(dependencies.get_db_session),
 ):
     """
     현재 사용자가 접근할 수 있는, 인덱싱된 모든 지식 소스를 반환합니다.
@@ -99,23 +109,31 @@ async def get_indexed_documents(
         result = await db_session.execute(
             stmt, {"allowed_groups": current_user.permission_groups}
         )
-        return {row.filter_key: row.display_name for row in result if row.filter_key}
+        return {
+            row.filter_key: row.display_name for row in result if row.filter_key
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve documents: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve documents: {e}"
+        )
 
 
 @router.delete("", status_code=status.HTTP_200_OK)
 async def delete_indexed_document(
     body: schemas.DeleteDocumentRequest,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
-    vector_store: BaseVectorStore = Depends(dependencies.get_vector_store),
+    agent: Agent = Depends(dependencies.get_agent),
 ):
     """
     인덱싱된 지식 소스(파일, ZIP, 레포)를 삭제합니다.
     사용자에게 해당 문서를 삭제할 권한이 있어야 합니다.
     """
+    vector_store = agent.vector_store
     if not isinstance(vector_store, PgVectorStore):
-        raise HTTPException(status_code=501, detail="Deletion is only supported for PgVectorStore.")
+        raise HTTPException(
+            status_code=501,
+            detail="Deletion is only supported for PgVectorStore.",
+        )
 
     try:
         deleted_count = await vector_store.delete_documents(
@@ -135,4 +153,6 @@ async def delete_indexed_document(
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete document: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete document: {e}"
+        )

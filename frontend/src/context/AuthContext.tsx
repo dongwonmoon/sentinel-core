@@ -1,9 +1,10 @@
 // frontend/src/context/AuthContext.tsx
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import api, { TokenResponse, UserResponse } from '../lib/api';
+import apiClient from '../lib/apiClient';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -24,29 +25,51 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const router = useRouter();
 
+  const logout = useCallback(() => {
+    localStorage.removeItem('access_token');
+    delete apiClient.defaults.headers.common['Authorization'];
+    setToken(null);
+    setIsAuthenticated(false);
+    setUser(null);
+    router.push('/login');
+  }, [router]);
+
   useEffect(() => {
-    const storedToken = localStorage.getItem('access_token');
-    // In a real app, you'd validate the token (e.g., by calling a /me endpoint)
-    if (storedToken) {
-      setToken(storedToken);
-      setIsAuthenticated(true);
-      // For now, we don't have a /me endpoint, so user info is not loaded here.
-      // In a real app, you'd fetch user details here.
-    }
-    setLoading(false);
-  }, []);
+    const loadUser = async () => {
+      const storedToken = localStorage.getItem('access_token');
+      if (storedToken) {
+        apiClient.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+        try {
+          const userData = await api.getMe();
+          setUser(userData);
+          setToken(storedToken);
+          setIsAuthenticated(true);
+        } catch (error) {
+          console.error("Failed to fetch user with stored token, logging out.", error);
+          logout();
+        }
+      }
+      setLoading(false);
+    };
+
+    loadUser();
+  }, [logout]);
 
   const login = async (username: string, password: string) => {
     setLoading(true);
     try {
-      const response: TokenResponse = await api.login(username, password);
+      const response = await api.login(username, password);
       localStorage.setItem('access_token', response.access_token);
+      apiClient.defaults.headers.common['Authorization'] = `Bearer ${response.access_token}`;
+      
+      const userData = await api.getMe();
+      setUser(userData);
       setToken(response.access_token);
       setIsAuthenticated(true);
-      // In a real app, fetch user details after login
-      // For now, set a dummy user
-      setUser({ user_id: 1, username: username, is_active: true, permission_groups: ['all_users'] });
-      router.push('/'); // Redirect to home page
+      
+      router.push('/');
+    } catch (error) {
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -55,21 +78,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const register = async (username: string, password: string, permission_groups: string[]) => {
     setLoading(true);
     try {
-      const response: UserResponse = await api.register({ username, password, permission_groups });
-      // After successful registration, you might want to automatically log them in
-      // For now, just redirect to login page
+      await api.register({ username, password, permission_groups });
       router.push('/login');
+    } catch (error) {
+      throw error;
     } finally {
       setLoading(false);
     }
-  };
-
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    setToken(null);
-    setIsAuthenticated(false);
-    setUser(null);
-    router.push('/login'); // Redirect to login page
   };
 
   return (

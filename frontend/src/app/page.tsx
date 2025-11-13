@@ -1,4 +1,4 @@
-// frontend/src/app/page/page.tsx
+// frontend/src/app/page.tsx
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -18,6 +18,10 @@ import {
   Menu,
   MenuItem,
   Fab,
+  List,
+  ListItem,
+  ListItemText,
+  Snackbar,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import AddIcon from '@mui/icons-material/Add';
@@ -25,27 +29,32 @@ import SendIcon from '@mui/icons-material/Send';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import { useAuth } from '../context/AuthContext';
-import api, { ChatMessage, ChatMessageRole, Source } from '../lib/api';
+import api, { ChatMessage } from '../lib/api';
 import ConversationSidebar from '../components/ConversationSidebar';
 import ContextSelectorModal from '../components/ContextSelectorModal';
 
 const drawerWidth = 280;
 
 export default function HomePage() {
-  const { user, logout, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentSources, setCurrentSources] = useState<Source[]>([]);
+  const [currentSources, setCurrentSources] = useState<any[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Upload menu state
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
+    open: false,
+    message: '',
+    severity: 'info',
+  });
+
   const [uploadAnchorEl, setUploadAnchorEl] = useState<null | HTMLElement>(null);
   const uploadMenuOpen = Boolean(uploadAnchorEl);
 
-  // Context selector modal state
   const [contextModalOpen, setContextModalOpen] = useState(false);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [contextButtonText, setContextButtonText] = useState('Context: All Documents');
@@ -62,35 +71,59 @@ export default function HomePage() {
     setUploadAnchorEl(null);
   };
 
-  const handleFileUpload = () => {
-    // TODO: Implement file upload logic
-    alert('File upload not yet implemented!');
+  const handleFileUploadClick = () => {
+    fileInputRef.current?.click();
     handleUploadMenuClose();
   };
 
-  const handleGithubIndex = () => {
-    // TODO: Implement GitHub indexing logic
-    alert('GitHub indexing not yet implemented!');
+  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setSnackbar({ open: true, message: `Uploading ${file.name}...`, severity: 'info' });
+    try {
+      const response = await api.uploadFile(file);
+      setSnackbar({ open: true, message: response.message, severity: 'success' });
+    } catch (err: any) {
+      const errorDetail = err.response?.data?.detail || 'File upload failed.';
+      setSnackbar({ open: true, message: errorDetail, severity: 'error' });
+    }
+  };
+
+  const handleGithubIndex = async () => {
     handleUploadMenuClose();
+    const repoUrl = window.prompt('Enter the GitHub repository URL to index:');
+    if (!repoUrl) return;
+
+    setSnackbar({ open: true, message: `Indexing ${repoUrl}...`, severity: 'info' });
+    try {
+      const response = await api.indexGithubRepo(repoUrl);
+      setSnackbar({ open: true, message: response.message, severity: 'success' });
+    } catch (err: any) {
+      const errorDetail = err.response?.data?.detail || 'GitHub indexing failed.';
+      setSnackbar({ open: true, message: errorDetail, severity: 'error' });
+    }
+  };
+  
+  const handleNewChat = () => {
+    setMessages([]);
+    setCurrentSources([]);
+    setError(null);
   };
 
-  const handleContextModalOpen = () => {
-    setContextModalOpen(true);
-  };
-
-  const handleContextModalClose = () => {
-    setContextModalOpen(false);
-  };
+  const handleContextModalOpen = () => setContextModalOpen(true);
+  const handleContextModalClose = () => setContextModalOpen(false);
 
   const handleSaveContext = (newSelectedDocIds: string[]) => {
     setSelectedDocIds(newSelectedDocIds);
     if (newSelectedDocIds.length === 0) {
-      setContextButtonText('Context: None');
+      setContextButtonText('Context: All Documents');
     } else if (newSelectedDocIds.length === 1) {
       setContextButtonText(`Context: 1 Document`);
     } else {
       setContextButtonText(`Context: ${newSelectedDocIds.length} Documents`);
     }
+    handleContextModalClose();
   };
 
   useEffect(() => {
@@ -117,10 +150,7 @@ export default function HomePage() {
     setInputMessage('');
     setError(null);
     setIsStreaming(true);
-    setCurrentSources([]); // Clear sources for new query
-
-    let fullAssistantResponse = '';
-    let assistantMessageIndex = -1;
+    setCurrentSources([]);
 
     try {
       await api.queryAgent(
@@ -129,36 +159,30 @@ export default function HomePage() {
           chat_history: messages,
           doc_ids_filter: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         },
-        (event) => {
+        (event) => { // onMessage
           const data = JSON.parse(event.data);
           if (data.event === 'token') {
             const token = data.data;
-            if (assistantMessageIndex === -1) {
-              assistantMessageIndex = messages.length; // Index of the new assistant message
-              setMessages((prev) => {
-                const newMsg: ChatMessage = { role: 'assistant', content: token };
-                return [...prev, newMsg];
-              });
-            } else {
-              setMessages((prev) => {
+            setMessages(prev => {
+              const lastMessage = prev[prev.length - 1];
+              if (lastMessage && lastMessage.role === 'assistant') {
                 const newMessages = [...prev];
-                newMessages[assistantMessageIndex].content += token;
+                newMessages[newMessages.length - 1] = { ...lastMessage, content: lastMessage.content + token };
                 return newMessages;
-              });
-            }
-            fullAssistantResponse += token;
+              } else {
+                return [...prev, { role: 'assistant', content: token }];
+              }
+            });
           } else if (data.event === 'sources') {
             setCurrentSources(data.data);
-          } else if (data.event === 'end') {
-            setIsStreaming(false);
           }
         },
-        (errorEvent) => {
+        (errorEvent) => { // onError
           console.error('SSE Error:', errorEvent);
           setError('An error occurred during streaming. Please try again.');
           setIsStreaming(false);
         },
-        () => {
+        () => { // onClose
           setIsStreaming(false);
         }
       );
@@ -179,6 +203,12 @@ export default function HomePage() {
 
   return (
     <Box sx={{ display: 'flex', height: '100vh' }}>
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelected}
+        style={{ display: 'none' }}
+      />
       <AppBar
         position="fixed"
         sx={{
@@ -200,7 +230,6 @@ export default function HomePage() {
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             Sentinel-Core RAG
           </Typography>
-          {/* Context Selector Button */}
           <Button variant="contained" color="secondary" onClick={handleContextModalOpen}>
             {contextButtonText}
           </Button>
@@ -211,22 +240,18 @@ export default function HomePage() {
         sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
         aria-label="conversation folders"
       >
-        {/* Mobile Drawer */}
         <Drawer
           variant="temporary"
           open={mobileOpen}
           onClose={handleDrawerToggle}
-          ModalProps={{
-            keepMounted: true, // Better open performance on mobile.
-          }}
+          ModalProps={{ keepMounted: true }}
           sx={{
             display: { xs: 'block', sm: 'none' },
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
         >
-          <ConversationSidebar mobileOpen={mobileOpen} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
+          <ConversationSidebar onNewChat={handleNewChat} mobileOpen={mobileOpen} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
         </Drawer>
-        {/* Desktop Drawer */}
         <Drawer
           variant="permanent"
           sx={{
@@ -235,7 +260,7 @@ export default function HomePage() {
           }}
           open
         >
-          <ConversationSidebar mobileOpen={mobileOpen} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
+          <ConversationSidebar onNewChat={handleNewChat} mobileOpen={mobileOpen} handleDrawerToggle={handleDrawerToggle} drawerWidth={drawerWidth} />
         </Drawer>
       </Box>
       <Box
@@ -249,7 +274,7 @@ export default function HomePage() {
           height: '100vh',
         }}
       >
-        <Toolbar /> {/* Spacer for AppBar */}
+        <Toolbar />
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Box sx={{ flexGrow: 1, overflowY: 'auto', mb: 2 }}>
           {messages.map((msg, index) => (
@@ -271,8 +296,8 @@ export default function HomePage() {
                   borderRadius: msg.role === 'user' ? '20px 20px 5px 20px' : '20px 20px 20px 5px',
                 }}
               >
-                <Typography variant="body1">{msg.content}</Typography>
-                {msg.role === 'assistant' && currentSources.length > 0 && (
+                <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{msg.content}</Typography>
+                {msg.role === 'assistant' && currentSources.length > 0 && index === messages.length - 1 && (
                   <Box sx={{ mt: 1, fontSize: '0.8rem', color: 'text.secondary' }}>
                     <Typography variant="caption">Sources:</Typography>
                     <List dense disablePadding>
@@ -290,7 +315,6 @@ export default function HomePage() {
           <div ref={messagesEndRef} />
         </Box>
         <Box component="form" onSubmit={handleSendMessage} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-          {/* Upload Button */}
           <IconButton
             color="primary"
             aria-label="upload new knowledge"
@@ -303,11 +327,8 @@ export default function HomePage() {
             anchorEl={uploadAnchorEl}
             open={uploadMenuOpen}
             onClose={handleUploadMenuClose}
-            MenuListProps={{
-              'aria-labelledby': 'upload-button',
-            }}
           >
-            <MenuItem onClick={handleFileUpload}>
+            <MenuItem onClick={handleFileUploadClick}>
               <UploadFileIcon sx={{ mr: 1 }} /> Upload File
             </MenuItem>
             <MenuItem onClick={handleGithubIndex}>
@@ -327,12 +348,7 @@ export default function HomePage() {
               }
             }}
             disabled={isStreaming}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                borderRadius: '25px',
-                pr: 0.5,
-              },
-            }}
+            sx={{ '& .MuiOutlinedInput-root': { borderRadius: '25px', pr: 0.5 } }}
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
@@ -357,6 +373,16 @@ export default function HomePage() {
         onSave={handleSaveContext}
         initialSelectedDocIds={selectedDocIds}
       />
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSnackbar({ ...snackbar, open: false })} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
