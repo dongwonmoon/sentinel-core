@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     # RunPod 등 Powerful LLM을 위한 별도 API 키
     POWERFUL_OLLAMA_API_KEY: Optional[str] = None
 
+    OLLAMA_BASE_URL: Optional[str] = None
+
     # --- config.yml 또는 기본값으로 관리되는 구조화된 설정 ---
     app: AppSettings = Field(default_factory=AppSettings)
     llm: LLMGroup

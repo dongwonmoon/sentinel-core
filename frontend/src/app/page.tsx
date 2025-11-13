@@ -45,6 +45,7 @@ export default function HomePage() {
   const [currentSources, setCurrentSources] = useState<Source[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const getErrorMessage = (err: unknown, fallbackMessage: string): string => {
     if (err instanceof Error && err.message) {
@@ -57,26 +58,6 @@ export default function HomePage() {
     }
 
     return fallbackMessage;
-  };
-
-  type SSEMessage =
-    | { event: 'token'; data: string }
-    | { event: 'sources'; data: Source[] };
-
-  const parseSSEMessage = (rawData: string): SSEMessage | null => {
-    try {
-      const parsed = JSON.parse(rawData) as { event?: string; data?: unknown };
-      if (parsed.event === 'token' && typeof parsed.data === 'string') {
-        return { event: 'token', data: parsed.data };
-      }
-      if (parsed.event === 'sources' && Array.isArray(parsed.data)) {
-        return { event: 'sources', data: parsed.data as Source[] };
-      }
-      return null;
-    } catch (parseError) {
-      console.error('Error parsing SSE message:', parseError, rawData);
-      return null;
-    }
   };
 
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
@@ -165,6 +146,13 @@ export default function HomePage() {
     handleContextModalClose();
   };
 
+  // Cleanup effect for EventSource
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+    };
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -182,7 +170,7 @@ export default function HomePage() {
     }
   }, [user]);
 
-  const handleSendMessage = async (event: React.FormEvent) => {
+  const handleSendMessage = (event: React.FormEvent) => {
     event.preventDefault();
     if (!inputMessage.trim() || isStreaming) return;
 
@@ -195,19 +183,18 @@ export default function HomePage() {
     setCurrentSources([]);
 
     try {
-      await api.queryAgent(
+      const eventSource = api.queryAgent(
         {
           query: userMessage.content,
           chat_history: updatedMessages,
           doc_ids_filter: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         },
         (event) => { // onMessage
-          const sseMessage = parseSSEMessage(event.data);
-          if (!sseMessage) {
-            return;
-          }
-          if (sseMessage.event === 'token') {
-            const token = sseMessage.data;
+          const parsedData = JSON.parse(event.data);
+          const sseEvent = parsedData.event;
+
+          if (sseEvent === 'token') {
+            const token = parsedData.data;
             setMessages(prev => {
               const lastMessage = prev[prev.length - 1];
               if (lastMessage && lastMessage.role === 'assistant') {
@@ -218,19 +205,26 @@ export default function HomePage() {
                 return [...prev, { role: 'assistant', content: token }];
               }
             });
-          } else if (sseMessage.event === 'sources') {
-            setCurrentSources(sseMessage.data);
+          } else if (sseEvent === 'sources') {
+            setCurrentSources(parsedData.data as Source[]);
+          } else if (sseEvent === 'end') {
+            setIsStreaming(false);
+            eventSourceRef.current?.close();
           }
         },
         (errorEvent) => { // onError
           console.error('SSE Error:', errorEvent);
           setError('An error occurred during streaming. Please try again.');
           setIsStreaming(false);
+          eventSourceRef.current?.close();
         },
-        () => { // onClose
+        () => { // onClose (This is now effectively handled by the 'end' event)
           setIsStreaming(false);
+          eventSourceRef.current?.close();
         }
       );
+      eventSourceRef.current = eventSource;
+
     } catch (err: unknown) {
       console.error('API Query Error:', err);
       setError(getErrorMessage(err, 'Failed to get response from agent.'));

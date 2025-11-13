@@ -105,6 +105,93 @@ async def query_agent(
     )
 
 
+@router.get("/query-stream")
+async def query_agent_stream(
+    query_request: str,
+    token: str,
+    agent: Agent = Depends(dependencies.get_agent),
+):
+    """
+    에이전트에게 질문하고, 답변을 스트리밍 방식으로 반환합니다. (GET, EventSource용)
+    """
+    from ...core.security import verify_token
+    from sqlalchemy import text
+    
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    # 1. 토큰 검증 및 사용자 정보 조회
+    token_data = verify_token(token, credentials_exception)
+    
+    # 2. DB 세션 가져오기 (get_db_session 의존성 수동 처리)
+    vector_store = agent.vector_store
+    if not isinstance(vector_store, dependencies.PgVectorStore):
+        raise HTTPException(
+            status_code=500,
+            detail="Database session is only available for PgVectorStore.",
+        )
+    session_local = vector_store.AsyncSessionLocal
+    if not session_local:
+        raise HTTPException(
+            status_code=500, detail="DB session factory is not initialized."
+        )
+    
+    db_session: AsyncSession = session_local()
+
+    try:
+        stmt = text("SELECT * FROM users WHERE username = :username")
+        result = await db_session.execute(stmt, {"username": token_data.username})
+        user_row = result.fetchone()
+
+        if user_row is None:
+            raise credentials_exception
+        
+        current_user = schemas.UserInDB(**user_row._asdict())
+        if not current_user.is_active:
+            raise HTTPException(status_code=400, detail="Inactive user")
+
+        # 3. 요청 파싱
+        try:
+            body = schemas.QueryRequest.parse_obj(json.loads(query_request))
+        except (json.JSONDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid query_request format")
+
+        # 4. 사용자 메시지 DB에 저장
+        await _save_chat_message(
+            schemas.ChatMessageBase(role="user", content=body.query),
+            session=db_session,
+            user_id=current_user.user_id,
+        )
+        await db_session.commit() # 수동 커밋 필요
+
+        # 5. 스트리밍 로직 호출
+        inputs = {
+            "question": body.query,
+            "permission_groups": current_user.permission_groups,
+            "top_k": body.top_k,
+            "doc_ids_filter": body.doc_ids_filter,
+            "chat_history": (
+                [msg.dict() for msg in body.chat_history]
+                if body.chat_history
+                else []
+            ),
+            "user_id": current_user.user_id,
+        }
+
+        return StreamingResponse(
+            _stream_agent_response(agent, inputs, db_session),
+            media_type="text/event-stream",
+        )
+    except Exception:
+        await db_session.rollback()
+        raise
+    finally:
+        await db_session.close()
+
+
 @router.get("/history", response_model=schemas.ChatHistoryResponse)
 async def get_chat_history(
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),

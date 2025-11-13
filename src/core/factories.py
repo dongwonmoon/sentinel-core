@@ -25,6 +25,7 @@ from ..components.tools.base import BaseTool
 
 def create_llm(
     llm_settings: LLMSettings,
+    full_settings: Settings, # Add full_settings here
     # 필요한 API 키는 의존성 주입 시 외부에서 전달받음
     openai_api_key: Optional[str] = None,
     anthropic_api_key: Optional[str] = None,
@@ -33,8 +34,13 @@ def create_llm(
     if llm_settings.provider == "ollama":
         from ..components.llms.ollama import OllamaLLM
 
+        # OLLAMA_BASE_URL 환경 변수가 설정되어 있으면 이를 우선적으로 사용
+        ollama_base_url = full_settings.OLLAMA_BASE_URL or llm_settings.api_base
+        if not ollama_base_url:
+            raise ValueError("Ollama API base URL is not configured.")
+
         return OllamaLLM(
-            base_url=llm_settings.api_base,
+            base_url=ollama_base_url,
             model_name=llm_settings.model_name,
             temperature=llm_settings.temperature,
         )

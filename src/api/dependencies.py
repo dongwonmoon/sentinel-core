@@ -48,9 +48,10 @@ def get_agent() -> Agent:
     vector_store = factories.create_vector_store(
         settings.vector_store, settings, embedding_model
     )
-    fast_llm = factories.create_llm(settings.llm.fast, settings.OPENAI_API_KEY)
+    fast_llm = factories.create_llm(settings.llm.fast, settings, settings.OPENAI_API_KEY)
     powerful_llm = factories.create_llm(
         settings.llm.powerful,
+        settings,
         settings.POWERFUL_OLLAMA_API_KEY or settings.OPENAI_API_KEY,
     )
     reranker = factories.create_reranker(

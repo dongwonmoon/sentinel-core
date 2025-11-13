@@ -93,8 +93,9 @@ class Agent:
         self.vector_store = vector_store
         self.reranker = reranker
         self.tools = {tool.name: tool for tool in tools}
+        logger.info(f"Agent 초기화 완료. 사용 가능 도구: {list(self.tools.keys())}")
         logger.info(
-            f"Agent 초기화 완료. 사용 가능 도구: {list(self.tools.keys())}"
+            f"Fast LLM: {fast_llm.model_name}, Powerful LLM: {powerful_llm.model_name}"
         )
 
         # LangGraph 워크플로우 빌드 및 컴파일
@@ -173,38 +174,26 @@ class Agent:
         """
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
-        history = _convert_history_dicts_to_messages(
-            state.get("chat_history", [])
-        )
+        history = _convert_history_dicts_to_messages(state.get("chat_history", []))
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
             history="\n".join([f"{m.type}: {m.content}" for m in history]),
             question=question,
         )
 
-        response = await self.llm_fast.invoke(
-            [HumanMessage(content=prompt)], config={}
-        )
+        response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
 
         # LLM의 응답을 파싱하여 라우팅 결정 (오류에 취약할 수 있음)
         try:
-            decision_text = (
-                response.content.strip().replace("[", "").replace("]", "")
-            )
-            llm_part, tool_part = [
-                part.strip() for part in decision_text.split(",")
-            ]
-            chosen_llm = (
-                "powerful" if "powerful" in llm_part.lower() else "fast"
-            )
+            decision_text = response.content.strip().replace("[", "").replace("]", "")
+            llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
+            chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
             tool_choice = (
                 tool_part
                 if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]
                 else "None"
             )
         except Exception as e:
-            logger.warning(
-                f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback."
-            )
+            logger.warning(f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback.")
             chosen_llm, tool_choice = "fast", "None"
 
         logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 도구: {tool_choice}")
@@ -245,31 +234,23 @@ class Agent:
         tool = self.tools.get("duckduckgo_search")
         if not tool:
             return {
-                "tool_outputs": {
-                    "search_result": "웹 검색 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}
             }
 
         result = await tool.arun(tool_input=state["question"])
         return {"tool_outputs": {"search_result": result}}
 
-    async def _run_code_execution_tool(
-        self, state: AgentState
-    ) -> Dict[str, Any]:
+    async def _run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
         """[노드] 'CodeExecution' 도구를 실행합니다."""
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
             return {
-                "tool_outputs": {
-                    "code_result": "코드 실행 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
         # 1. Powerful LLM으로 실행할 코드 생성
-        code_gen_prompt = prompts.CODE_GEN_PROMPT.format(
-            question=state["question"]
-        )
+        code_gen_prompt = prompts.CODE_GEN_PROMPT.format(question=state["question"])
         response = await self.llm_powerful.invoke(
             [HumanMessage(content=code_gen_prompt)]
         )
@@ -302,24 +283,26 @@ class Agent:
         tool_outputs = state.get("tool_outputs", {})
 
         if tool_choice == "RAG" and tool_outputs.get("rag_chunks"):
-            docs = [
-                chunk["page_content"] for chunk in tool_outputs["rag_chunks"]
-            ]
+            docs = [chunk["page_content"] for chunk in tool_outputs["rag_chunks"]]
             context_str = "[사내 RAG 정보]\n" + "\n\n---\n\n".join(docs)
         elif tool_choice == "WebSearch" and tool_outputs.get("search_result"):
             context_str = f"[웹 검색 결과]\n{tool_outputs['search_result']}"
         elif tool_choice == "CodeExecution" and tool_outputs.get("code_result"):
             code_input = state.get("code_input", "")
             code_result = tool_outputs.get("code_result", "")
-            context_str = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            context_str = (
+                f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            )
         elif tool_choice == "None":
-            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            context_str = (
+                "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            )
         else:
-            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            context_str = (
+                "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            )
 
-        history = _convert_history_dicts_to_messages(
-            state.get("chat_history", [])
-        )
+        history = _convert_history_dicts_to_messages(state.get("chat_history", []))
         prompt = prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
             context=context_str,
             question=state["question"],
@@ -349,9 +332,7 @@ class Agent:
         workflow.add_node("route_query", self._route_query)
         workflow.add_node("run_rag_tool", self._run_rag_tool)
         workflow.add_node("run_web_search_tool", self._run_web_search_tool)
-        workflow.add_node(
-            "run_code_execution_tool", self._run_code_execution_tool
-        )
+        workflow.add_node("run_code_execution_tool", self._run_code_execution_tool)
         workflow.add_node("generate_final_answer", self._generate_final_answer)
 
         # 엣지 연결

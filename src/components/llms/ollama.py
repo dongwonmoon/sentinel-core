@@ -26,6 +26,7 @@ class OllamaLLM(BaseLLM):
         Args:
             settings: 애플리케이션의 설정을 담고 있는 Settings 객체입니다.
         """
+        self.model_name = model_name
         self._client = ChatOllama(
             base_url=base_url,
             model=model_name,
@@ -56,9 +57,7 @@ class OllamaLLM(BaseLLM):
         async for chunk in self.client.astream(messages, config=config):
             yield chunk
 
-    async def invoke(
-        self, messages: List[BaseMessage], config: Dict[str, Any]
-    ) -> Any:
+    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
         """
         Ollama 모델을 호출하여 전체 응답을 받습니다.
 

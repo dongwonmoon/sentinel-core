@@ -103,57 +103,41 @@ const api = {
   },
 
   // queryAgent will handle SSE, so it's a bit different
-  queryAgent: async (
+  queryAgent: (
     data: QueryRequest,
     onMessage: (event: MessageEvent) => void,
     onError: (error: Event) => void,
     onClose: () => void
-  ): Promise<void> => {
+  ): EventSource => {
     const token = localStorage.getItem('access_token');
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
+    const queryParams = new URLSearchParams();
+    queryParams.set('query_request', JSON.stringify(data));
     if (token) {
-      headers.Authorization = `Bearer ${token}`;
+      queryParams.set('token', token);
     }
 
-    const response = await fetch(`${apiClient.defaults.baseURL}/chat/query`, {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(data),
-    });
+    const eventSource = new EventSource(
+      `${apiClient.defaults.baseURL}/chat/query-stream?${queryParams.toString()}`
+    );
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Failed to query agent');
-    }
+    eventSource.onmessage = (event) => {
+      onMessage(event);
+    };
 
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder('utf-8');
+    eventSource.onerror = (error) => {
+      console.error('EventSource failed:', error);
+      onError(error);
+      eventSource.close(); // Close on error
+    };
+    
+    // The browser will automatically handle closing and reopening, 
+    // but we provide a manual close handler from the caller.
+    // The 'close' event is not standard in EventSource, so we rely on the caller
+    // to manage the closing when the stream is naturally finished by the server.
+    // A common pattern is for the server to send a special 'end' event.
+    // For now, we'll return the eventSource instance so the caller can close it.
 
-    if (!reader) {
-      throw new Error('Failed to get reader for streaming response.');
-    }
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        onClose();
-        break;
-      }
-      const chunk = decoder.decode(value, { stream: true });
-      // Each chunk might contain multiple SSE messages or partial messages
-      chunk.split('\n\n').forEach(message => {
-        if (message.startsWith('data: ')) {
-          const eventData = message.substring(6);
-          try {
-            onMessage(new MessageEvent('message', { data: eventData }));
-          } catch (e) {
-            console.error('Error parsing SSE message:', e, eventData);
-          }
-        }
-      });
-    }
+    return eventSource;
   },
 
   // Document Endpoints
