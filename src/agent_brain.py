@@ -3,6 +3,7 @@ import json
 
 from langchain_core.messages import HumanMessage
 from langchain_core.utils.pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langgraph.graph import StateGraph, END
 
 from .config import Settings
@@ -27,12 +28,26 @@ class AgentState(TypedDict):
     permission_groups: List[str]  # 사용자의 권한 그룹
     top_k: int  # RAG 검색 시 가져올 최종 청크 수
     doc_ids_filter: Optional[List[str]]
+    chat_history: List[Dict[str, str]]
 
+    chosen_llm: Literal["fast", "powerful"]
     tool_choice: str  # 라우터가 결정한 도구 이름 ("RAG", "WebSearch", "None")
     tool_outputs: Dict[str, Any]  # 각 도구의 실행 결과를 저장하는 딕셔너리
     code_input: Optional[str] = None
 
     answer: str  # 최종 답변
+
+
+def _convert_history_dicts_to_messages(
+    history_dicts: List[Dict[str, str]],
+) -> List[BaseMessage]:
+    messages = []
+    for msg in history_dicts:
+        if msg.get("role") == "user":
+            messages.append(HumanMessage(content=msg.get("content", "")))
+        elif msg.get("role") == "assistant":
+            messages.append(AIMessage(content=msg.get("content", "")))
+    return messages
 
 
 class ToolRouter(BaseModel):
@@ -53,6 +68,7 @@ class AgentBrain:
         self,
         settings: Settings,
         llm: BaseLLM,
+        powerful_llm: BaseLLM,
         vector_store: BaseVectorStore,
         reranker: BaseReranker,
         tools: List[BaseTool],
@@ -68,7 +84,8 @@ class AgentBrain:
             tools: BaseTool 리스트 (사용할 도구 목록)
         """
         self.settings = settings
-        self.llm = llm
+        self.llm_fast = llm
+        self.llm_powerful = powerful_llm
         self.vector_store = vector_store
         self.reranker = reranker
         # 도구 이름을 키로 사용하여 쉽게 접근할 수 있도록 딕셔너리로 변환
@@ -92,36 +109,53 @@ class AgentBrain:
         """LLM을 이용해 질문을 분석하고 사용할 도구를 비동기적으로 결정합니다."""
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
+        history_messages = _convert_history_dicts_to_messages(
+            state.get("chat_history", [])
+        )
 
-        # LLM이 ToolRouter Pydantic 모델에 맞춰 구조화된 출력을 생성하도록 설정
-        structured_llm = self.llm.client.with_structured_output(ToolRouter)
+        prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
+            history="\n".join(
+                [f"{msg.type}: {msg.content}" for msg in history_messages]
+            ),
+            question=question,
+        )
+
+        response = await self.llm_fast.invoke(
+            messages=[HumanMessage(content=prompt)],
+            config={},
+        )
+
+        route_decision_text = response.content.strip().replace("[", "").replace("]", "")
+        logger.info(f"라우터 결정 텍스트: {route_decision_text}")
+
+        # 기본값 설정 (Fallback)
+        chosen_llm = "fast"
+        tool_choice = "None"
 
         try:
-            # LLM을 호출하여 질문에 가장 적합한 도구를 선택
-            prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(question=question)
-            response = await self.llm.invoke(
-                messages=[HumanMessage(content=prompt)],
-                config={},
-            )
-            logger.info(f"라우터 출력: {response.content}")
+            parts = route_decision_text.split(",")
+            llm_part = parts[0].strip().lower()
+            tool_part = parts[1].strip()
 
-            response_text = response.content.strip()
+            if "powerful" in llm_part:
+                chosen_llm = "powerful"
 
-            tool_choice = "None"  # 기본값
-            if "[RAG]" in response_text:
-                tool_choice = "RAG"
-            elif "[WebSearch]" in response_text:
-                tool_choice = "WebSearch"
-            elif "[CodeExecution]" in response_text:
-                tool_choice = "CodeExecution"
-
+            if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]:
+                tool_choice = tool_part
         except Exception as e:
-            # 구조화된 출력에 실패할 경우, 일반 대화로 fallback
-            logger.warning(f"라우팅 실패 ({e}). 'None'으로 fallback합니다.")
+            logger.warning(
+                f"라우터 출력 파싱 실패 ({e}). [Fast_LLM, None]으로 Fallback합니다."
+            )
+            chosen_llm = "fast"
             tool_choice = "None"
 
-        logger.info(f"라우터 결정: {tool_choice}")
-        return {"tool_choice": tool_choice, "tool_outputs": {}}
+        logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 도구: {tool_choice}")
+
+        return {
+            "chosen_llm": chosen_llm,
+            "tool_choice": tool_choice,
+            "tool_outputs": {},
+        }
 
     async def _run_rag_tool(self, state: AgentState) -> Dict[str, Any]:
         """'RAG' 도구를 비동기적으로 실행합니다 (Retrieve -> Rerank)."""
@@ -185,7 +219,7 @@ class AgentBrain:
             }
 
         logger.debug(f"--- Code Gen 프롬프트 전송... ---")
-        code_gen_response = await self.llm.invoke(
+        code_gen_response = await self.llm_powerful.invoke(
             messages=[
                 HumanMessage(content=prompts.CODE_GEN_PROMPT.format(question=question))
             ],
@@ -214,6 +248,14 @@ class AgentBrain:
         """모든 도구의 결과를 취합하여 최종 답변을 비동기 스트리밍으로 생성합니다."""
         logger.debug("--- [Agent Node: Stream Generate] ---")
         question = state["question"]
+        chosen_llm_type = state.get("chosen_llm", "fast")
+
+        if chosen_llm_type == "powerful":
+            llm_to_use = self.llm_powerful
+            logger.info("답변 생성에 'Powerful LLM'을 사용합니다.")
+        else:
+            llm_to_use = self.llm_fast
+            logger.info("답변 생성에 'Fast LLM'을 사용합니다.")
         tool_choice = state.get("tool_choice")
         tool_outputs = state.get("tool_outputs", {})
 
@@ -238,20 +280,19 @@ class AgentBrain:
         else:
             context = "도움말: 관련 정보를 찾지 못했습니다."
 
-        # 2. 프롬프트 생성 및 LLM 스트리밍 호출
-        messages = [
-            HumanMessage(
-                content=prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
-                    context=context,
-                    question=question,
-                    permission_groups=state.get("permission_groups", ["N/A"]),
-                )
-            )
-        ]
+        history_messages = _convert_history_dicts_to_messages(
+            state.get("chat_history", [])
+        )
+        final_prompt = prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
+            context=context,
+            question=question,
+            permission_groups=state.get("permission_groups", ["N/A"]),
+        )
+        messages_to_llm = history_messages + [HumanMessage(content=final_prompt)]
 
         full_answer = ""
 
-        async for chunk in self.llm.stream(messages, config={}):
+        async for chunk in llm_to_use.stream(messages_to_llm, config={}):
             full_answer += chunk.content
             yield {"answer": chunk.content}
 

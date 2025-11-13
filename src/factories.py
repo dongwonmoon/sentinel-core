@@ -25,18 +25,43 @@ def get_embedding_model(s: Settings) -> BaseEmbeddingModel:
         return OllamaEmbedding(settings=s)
     elif s.EMBEDDING_MODEL_TYPE == "openai":
         return OpenAIEmbedding(settings=s)
-    raise ValueError(
-        f"Unsupported embedding model type: {s.EMBEDDING_MODEL_TYPE}"
-    )
+    raise ValueError(f"Unsupported embedding model type: {s.EMBEDDING_MODEL_TYPE}")
 
 
 def get_llm(s: Settings) -> BaseLLM:
-    """설정에 맞는 LLM 인스턴스를 생성합니다."""
+    """'Fast' LLM 인스턴스를 생성합니다. (기존 LLM)"""
     if s.LLM_TYPE == "ollama":
-        return OllamaLLM(settings=s)
+        return OllamaLLM(
+            base_url=s.OLLAMA_BASE_URL,
+            model_name=s.OLLAMA_MODEL_NAME,
+            temperature=s.OLLAMA_TEMPERATURE,
+        )
     elif s.LLM_TYPE == "openai":
-        return OpenAILLM(settings=s)
-    raise ValueError(f"Unsupported LLM type: {s.LLM_TYPE}")
+        return OpenAILLM(
+            base_url=s.OPENAI_API_BASE_URL,
+            model_name=s.OPENAI_MODEL_NAME,
+            api_key=s.OPENAI_API_KEY,
+            temperature=0,
+        )
+    raise ValueError(f"Unsupported 'Fast' LLM type: {s.LLM_TYPE}")
+
+
+def get_powerful_llm(s: Settings) -> BaseLLM:
+    """설정에 맞는 'Powerful' LLM 인스턴스를 생성합니다."""
+    if s.POWERFUL_LLM_TYPE == "ollama":
+        return OllamaLLM(
+            base_url=s.POWERFUL_API_BASE_URL,
+            model_name=s.POWERFUL_MODEL_NAME,
+            temperature=s.POWERFUL_LLM_TEMPERATURE,
+        )
+    elif s.POWERFUL_LLM_TYPE == "openai":
+        return OpenAILLM(
+            base_url=s.POWERFUL_API_BASE_URL,
+            model_name=s.POWERFUL_MODEL_NAME,
+            api_key=s.OPENAI_API_KEY,
+            temperature=s.POWERFUL_LLM_TEMPERATURE,
+        )
+    raise ValueError(f"Unsupported 'Powerful' LLM type: {s.POWERFUL_LLM_TYPE}")
 
 
 def get_vector_store(

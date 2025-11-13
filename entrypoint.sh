@@ -5,15 +5,15 @@ set -e
 
 # docker-compose.yml에서 환경 변수로 주입될 때까지 대기합니다.
 # 이 변수들은 PostgreSQL 연결에 사용됩니다.
-: "${DB_HOST?DB_HOST가 설정되지 않았습니다}"
-: "${DB_PORT?DB_PORT가 설정되지 않았습니다}"
-: "${DB_USER?DB_USER가 설정되지 않았습니다}"
+: "${POSTGRES_HOST?POSTGRES_HOST가 설정되지 않았습니다}"
+: "${POSTGRES_PORT?POSTGRES_PORT가 설정되지 않았습니다}"
+: "${POSTGRES_USER?POSTGRES_USER가 설정되지 않았습니다}"
 
 echo "Waiting for postgres..."
 
 # pg_isready를 사용하여 데이터베이스가 연결을 수락할 준비가 될 때까지 대기합니다.
 # -h: 호스트, -p: 포트, -U: 사용자
-while ! pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER"; do
+while ! pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER"; do
   sleep 2
 done
 

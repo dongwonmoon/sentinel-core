@@ -23,7 +23,8 @@ services:
       context: dockerfiles/.
       dockerfile: Dockerfile.api
     container_name: sentinel_api
-    command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000"
+    entrypoint: ["/app/entrypoint.sh"]
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
       - "8000:8000"
     volumes:
@@ -33,11 +34,11 @@ services:
       - db
       - redis
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=${POSTGRES_USER}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - DB_NAME=${POSTGRES_DB}
+      - POSTGRES_DB=${POSTGRES_DB}
       - REDIS_HOST=redis
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: always
@@ -55,11 +56,11 @@ services:
       - db
       - redis
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=${POSTGRES_USER}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - DB_NAME=${POSTGRES_DB}
+      - POSTGRES_DB=${POSTGRES_DB}
       - REDIS_HOST=redis
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     restart: always
@@ -78,6 +79,7 @@ services:
       - api
     environment:
       - API_BASE_URL=http://api:8000
+      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
     restart: always
 
 volumes:

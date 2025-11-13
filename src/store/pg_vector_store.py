@@ -218,3 +218,59 @@ class PgVectorStore(BaseVectorStore):
                 f"'{query[:20]}...' 쿼리로 {len(search_results)}개 결과 검색 완료."
             )
             return search_results
+
+    async def delete_documents(
+        self, doc_id_or_prefix: str, permission_groups: List[str]
+    ) -> int:
+        """
+        주어진 doc_id (정확히 일치) 또는 doc_id 접두사(prefix, e.g., 'github-repo-name/')와
+        일치하는 모든 문서를 삭제합니다.
+
+        삭제는 'documents' 테이블에서 시작되며, 'document_chunks' 테이블의
+        관련 청크는 'ON DELETE CASCADE' 외래 키 제약 조건에 의해 자동으로 삭제됩니다.
+        (참고: alembic/versions/711d0b8478e2...py 에서 ondelete='CASCADE' 설정 확인)
+
+        Returns:
+            삭제된 문서(documents) 레코드의 수.
+        """
+        logger.info(
+            f"'{doc_id_or_prefix}' 문서 삭제 시도 (Groups: {permission_groups})..."
+        )
+
+        # PgVectorStore가 직접 DB 세션을 관리하도록
+        async with self.AsyncSessionLocal() as session:
+            async with session.begin():  # 트랜잭션 시작
+
+                # 접두사(Prefix)인지, 정확한 ID인지 확인
+                if doc_id_or_prefix.endswith("/"):
+                    # 'github-repo-name/' 또는 'file-upload-zip-name/'
+                    stmt = text(
+                        """
+                        DELETE FROM documents
+                        WHERE doc_id LIKE :prefix
+                          AND permission_groups && :allowed_groups
+                    """
+                    )
+                    params = {
+                        "prefix": doc_id_or_prefix + "%",  # 와일드카드 추가
+                        "allowed_groups": permission_groups,
+                    }
+                else:
+                    # 'file-upload-hr_policy.txt'
+                    stmt = text(
+                        """
+                        DELETE FROM documents
+                        WHERE doc_id = :doc_id
+                          AND permission_groups && :allowed_groups
+                    """
+                    )
+                    params = {
+                        "doc_id": doc_id_or_prefix,
+                        "allowed_groups": permission_groups,
+                    }
+
+                result = await session.execute(stmt, params)
+                deleted_count = result.rowcount  # 영향을 받은(삭제된) 행의 수
+
+        logger.info(f"총 {deleted_count}개의 문서 레코드 삭제 완료.")
+        return deleted_count

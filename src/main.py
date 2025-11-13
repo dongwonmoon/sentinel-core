@@ -1,13 +1,27 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from typing import List, Dict, Any, AsyncGenerator, Optional
+from typing import List, Dict, Any, AsyncGenerator, Optional, Literal
+from datetime import datetime
 
 import uvicorn
 import redis.asyncio as redis
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Request
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    File,
+    UploadFile,
+    Form,
+    Request,
+    Depends,
+    status,
+)
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, HttpUrl
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 # --- 1. 설정 및 추상화 모듈 임포트 ---
 from .agent_brain import AgentBrain
@@ -31,13 +45,16 @@ from .logger import get_logger
 from .factories import (
     get_embedding_model,
     get_llm,
+    get_powerful_llm,
     get_vector_store,
     get_reranker,
     get_tools,
 )
+from . import auth
 
 logger = get_logger(__name__)
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # --- 2. FastAPI Lifespan 및 앱 초기화 ---
 
@@ -55,7 +72,8 @@ async def lifespan(app: FastAPI):
     try:
         # 팩토리 함수를 사용하여 설정에 따라 각 컴포넌트의 실제 구현체를 생성
         embedding_model = get_embedding_model(settings)
-        llm = get_llm(settings)
+        llm_fast = get_llm(settings)
+        llm_powerful = get_powerful_llm(settings)
         vector_store = get_vector_store(settings, embedding_model)
         reranker = get_reranker(settings)
         tools = get_tools(settings)
@@ -63,7 +81,8 @@ async def lifespan(app: FastAPI):
         # AgentBrain을 모든 컴포넌트를 주입하여 초기화
         agent_brain = AgentBrain(
             settings=settings,
-            llm=llm,
+            llm=llm_fast,
+            powerful_llm=llm_powerful,
             vector_store=vector_store,
             reranker=reranker,
             tools=tools,
@@ -111,6 +130,28 @@ app = FastAPI(
 # --- 4. API 요청/응답 모델 ---
 
 
+class ChatMessageBase(BaseModel):
+    """채팅 메시지의 기본 스키마"""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatMessageHistory(ChatMessageBase):
+    """DB에서 읽어올 때 사용할 스키마 (생성 시간 포함)"""
+
+    created_at: datetime
+
+    class Config:
+        orm_mode = True  # SQLAlchemy 모델과 호환
+
+
+class ChatHistoryResponse(BaseModel):
+    """GET /chat-history 응답 스키마"""
+
+    messages: List[ChatMessageHistory]
+
+
 class QueryRequest(BaseModel):
     """API가 받을 요청 본문의 형태를 정의합니다."""
 
@@ -121,6 +162,9 @@ class QueryRequest(BaseModel):
     top_k: int = Field(default=3, description="RAG 검색 시 반환할 최종 청크 수")
     doc_ids_filter: Optional[List[str]] = Field(
         default=None, description="RAG 검색을 제한할 문서 ID 리스트"
+    )
+    chat_history: Optional[List[ChatMessageBase]] = Field(
+        default=None, description="이전 대화 기록"
     )
 
 
@@ -137,6 +181,12 @@ class Source(BaseModel):
     page_content: str
     metadata: Dict[str, Any]
     score: float
+
+
+class DeleteDocumentRequest(BaseModel):
+    """DELETE /documents 요청 본문 스키마"""
+
+    doc_id_or_prefix: str = Field(..., description="삭제할 doc_id 또는 접두사")
 
 
 # --- 5. API 엔드포인트 ---
@@ -239,8 +289,189 @@ async def stream_cached_response(
     yield f"data: {json.dumps({'event': 'end'})}\n\n"
 
 
+async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """
+    요청마다 DB 세션을 생성하고, 완료되면 닫는 FastAPI 의존성.
+    PgVectorStore가 초기화한 세션 메이커를 사용합니다.
+    """
+    session_local = request.app.state.agent_brain.vector_store.AsyncSessionLocal
+    if not session_local:
+        raise HTTPException(
+            status_code=500, detail="DB 세션 풀이 초기화되지 않았습니다."
+        )
+
+    session: AsyncSession = session_local()
+    logger.info("--- [DB] 트랜잭션 시작 ---")
+
+    try:
+        yield session  # 엔드포인트 실행
+        logger.info("--- [DB] 트랜잭션 커밋 시도 ---")
+        await session.commit()
+        logger.info("--- [DB] 트랜잭션 커밋 완료 ---")
+
+    except Exception as e:
+        logger.error(f"--- [DB] 예외 발생, 트랜잭션 롤백: {e} ---", exc_info=True)
+        await session.rollback()
+        raise e  # 오류를 FastAPI로 다시 전달
+    finally:
+        logger.info("--- [DB] 세션 닫기 ---")
+        await session.close()
+
+
+async def get_user_from_db(
+    session: AsyncSession, username: str
+) -> Optional[auth.UserInDB]:
+    """DB에서 사용자 정보를 조회합니다."""
+    stmt = text("SELECT * FROM users WHERE username = :username")
+    result = await session.execute(stmt, {"username": username})
+    user_row = result.fetchone()
+    if user_row:
+        return auth.UserInDB(**user_row._asdict())  # Row를 Pydantic 모델로 변환
+    return None
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_db_session)
+) -> auth.UserInDB:
+    """
+    JWT 토큰을 검증하고, DB에서 최신 사용자 정보를 반환하는 핵심 의존성.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="자격 증명을 검증할 수 없습니다.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    token_data = auth.verify_token(token, credentials_exception)
+
+    user = await get_user_from_db(session, token_data.username)
+    if user is None or not user.is_active:
+        raise credentials_exception
+    return user
+
+
+@app.post("/register", response_model=auth.User, status_code=status.HTTP_201_CREATED)
+async def register_user(
+    user_create: auth.UserCreate, session: AsyncSession = Depends(get_db_session)
+):
+    """
+    신규 사용자 등록 (회원가입).
+    (MVP: 우선은 누구나 가입 가능하게 둠)
+    """
+    db_user = await get_user_from_db(session, user_create.username)
+    if db_user:
+        raise HTTPException(...)
+
+    hashed_password = auth.get_password_hash(user_create.password)
+
+    stmt = text("""...""")
+    try:
+        new_user_row = (await session.execute(stmt, {...})).fetchone()
+    except Exception as e:
+        logger.error(f"User INSERT 실패: {e}")
+        raise HTTPException(...)
+
+    if not new_user_row:
+        raise HTTPException(...)
+
+    return auth.User(**new_user_row._asdict())
+
+
+@app.post("/token", response_model=auth.Token)
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    사용자 로그인 (JWT 토큰 발급).
+    FastAPI의 OAuth2PasswordRequestForm을 사용하여 'application/x-www-form-urlencoded'로 요청받음.
+    """
+    user = await get_user_from_db(session, form_data.username)
+    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="사용자 이름 또는 비밀번호가 올바르지 않습니다.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 토큰에 username과 실제 권한 그룹을 저장
+    access_token_data = {
+        "sub": user.username,
+        "permission_groups": user.permission_groups,
+    }
+    access_token = auth.create_access_token(data=access_token_data)
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/chat-history", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    current_user: auth.UserInDB = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    현재 로그인한 사용자의 모든 채팅 기록을 시간순으로 가져옵니다.
+    """
+    stmt = text(
+        """
+        SELECT role, content, created_at 
+        FROM chat_history
+        WHERE user_id = :user_id 
+        ORDER BY created_at ASC
+    """
+    )
+    result = await session.execute(stmt, {"user_id": current_user.user_id})
+    messages = [
+        ChatMessageHistory(
+            role=row.role, content=row.content, created_at=row.created_at
+        )
+        for row in result
+    ]
+    return ChatHistoryResponse(messages=messages)
+
+
+@app.post("/chat-message", status_code=status.HTTP_201_CREATED)
+async def save_chat_message(
+    message: ChatMessageBase,
+    current_user: auth.UserInDB = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    'user' 또는 'assistant'의 단일 메시지를 DB에 저장합니다.
+    """
+
+    try:
+        stmt = text(
+            """
+            INSERT INTO chat_history (user_id, role, content)
+            VALUES (:user_id, :role, :content)
+        """
+        )
+
+        logger.info(f"--- [CHAT_SAVE] INSERT 실행 (User: {current_user.user_id}) ---")
+        await session.execute(
+            stmt,
+            {
+                "user_id": current_user.user_id,
+                "role": message.role,
+                "content": message.content,
+            },
+        )
+        logger.info(f"--- [CHAT_SAVE] INSERT 완료 ---")
+
+    except Exception as e:
+        logger.error(f"--- [CHAT_SAVE] INSERT 실패: {e} ---", exc_info=True)
+        raise e  # 예외를 get_db_session으로 전달하여 롤백
+
+    return {"status": "message saved"}
+
+
 @app.post("/query/corporate")
-async def query_corporate_core(request: Request, body: QueryRequest):
+async def query_corporate_core(
+    request: Request,
+    body: QueryRequest,
+    current_user: auth.UserInDB = Depends(get_current_user),
+):
     """
     LangGraph 에이전트의 답변을 스트리밍 방식으로 반환합니다.
     """
@@ -254,7 +485,8 @@ async def query_corporate_core(request: Request, body: QueryRequest):
         )
 
     filter_key = ":".join(sorted(body.doc_ids_filter)) if body.doc_ids_filter else "all"
-    cache_key = f"sentinel_cache:{body.query}:{sorted(body.permission_groups)}"
+    user_perms_key = ":".join(sorted(current_user.permission_groups))
+    cache_key = f"sentinel_cache:{body.query}:{user_perms_key}:{filter_key}"
 
     if redis_client:
         try:
@@ -271,11 +503,16 @@ async def query_corporate_core(request: Request, body: QueryRequest):
 
     logger.info(f"--- [Cache] MISS: {cache_key} ---")
 
+    chat_history_dicts = []
+    if body.chat_history:
+        chat_history_dicts = [msg.dict() for msg in body.chat_history]
+
     inputs = {
         "question": body.query,
-        "permission_groups": body.permission_groups,
+        "permission_groups": current_user.permission_groups,
         "top_k": body.top_k,
         "doc_ids_filter": body.doc_ids_filter,
+        "chat_history": chat_history_dicts,
     }
     return StreamingResponse(
         stream_agent_response(agent_brain, inputs, redis_client, cache_key),
@@ -287,24 +524,26 @@ async def query_corporate_core(request: Request, body: QueryRequest):
 async def upload_and_index_document(
     file: UploadFile = File(...),
     permission_groups_str: str = Form('["all_users"]'),
+    current_user: auth.UserInDB = Depends(get_current_user),
 ):
     """
     파일을 업로드받아 Celery에 '백그라운드 인덱싱' 작업을 위임합니다.
     """
     try:
         file_content = await file.read()
-        permission_groups = json.loads(permission_groups_str)
-        if not isinstance(permission_groups, list):
-            raise ValueError("permission_groups는 반드시 리스트 형태여야 합니다.")
+        user_permission_groups = current_user.permission_groups
+        if not user_permission_groups:
+            user_permission_groups = ["all_users"]
 
-        # Celery 작업 호출
         process_document_indexing.delay(
             file_content=file_content,
             file_name=file.filename,
-            permission_groups=permission_groups,
+            permission_groups=user_permission_groups,  # 실제 사용자 권한 전달
         )
 
-        logger.info(f"'{file.filename}' 파일을 Celery에 인덱싱 작업으로 위임했습니다.")
+        logger.info(
+            f"'{file.filename}' 파일을 Celery에 위임 (User: {current_user.username}, Groups: {user_permission_groups})"
+        )
         return {
             "status": "success",
             "filename": file.filename,
@@ -316,7 +555,9 @@ async def upload_and_index_document(
 
 
 @app.get("/documents")
-async def get_indexed_documents(request: Request):
+async def get_indexed_documents(
+    request: Request, current_user: auth.UserInDB = Depends(get_current_user)
+):
     """
     현재 인덱싱된 모든 문서의 doc_id와 파일 이름을 반환합니다.
     """
@@ -331,63 +572,81 @@ async def get_indexed_documents(request: Request):
 
     try:
         async with session_local() as session:
-            from sqlalchemy import text
 
             # 'source' 메타데이터에서 파일 이름을 가져옵니다. (zip 파일의 경우 원본 zip 이름)
             stmt = text(
                 """
-                -- 1. 개별 파일 가져오기
+                WITH FilteredDocs AS (
+                    SELECT DISTINCT 
+                        doc_id,
+                        metadata->>'source' AS source_name,
+                        metadata->>'original_zip' AS zip_name,
+                        metadata->>'repo_name' AS repo_name,
+                        metadata->>'source_type' AS source_type
+                    FROM documents d
+                    WHERE d.permission_groups && :allowed_groups -- [보안 필터]
+                )
+                -- 1. 개별 파일
                 SELECT 
                     doc_id AS filter_key, 
-                    metadata->>'source' AS display_name
-                FROM documents
-                WHERE metadata->>'source_type' = 'file-upload'
+                    source_name AS display_name
+                FROM FilteredDocs
+                WHERE source_type = 'file-upload'
                 
                 UNION
                 
-                -- 2. ZIP 파일들 가져오기 (이름 기준 중복 제거)
+                -- 2. ZIP 파일들
                 SELECT 
-                    DISTINCT ON (metadata->>'original_zip')
-                    'file-upload-' || (metadata->>'original_zip') || '/' AS filter_key,
-                    metadata->>'original_zip' AS display_name
-                FROM documents
-                WHERE metadata->>'source_type' = 'file-upload-zip'
+                    'file-upload-' || zip_name || '/' AS filter_key,
+                    zip_name AS display_name
+                FROM FilteredDocs
+                WHERE source_type = 'file-upload-zip' AND zip_name IS NOT NULL
                 
-                ORDER BY display_name
-                
-                -- 3. GitHub 레포들 가져오기 (이름 기준 중복 제거)
+                UNION
+
+                -- 3. GitHub 레포들
                 SELECT 
-                    DISTINCT ON (metadata->>'repo_name')
-                    'github-repo-' || (metadata->>'repo_name') || '/' AS filter_key,
-                    metadata->>'repo_name' AS display_name
-                FROM documents
-                WHERE metadata->>'source_type' = 'github-repo'
+                    'github-repo-' || repo_name || '/' AS filter_key,
+                    repo_name AS display_name
+                FROM FilteredDocs
+                WHERE source_type = 'github-repo' AND repo_name IS NOT NULL
                 
                 ORDER BY display_name
             """
             )
-            result = await session.execute(stmt)
+            result = await session.execute(
+                stmt, {"allowed_groups": current_user.permission_groups}
+            )
 
             documents = {row.filter_key: row.display_name for row in result}
             return documents
+
     except Exception as e:
         logger.error(f"인덱싱된 문서 조회 실패: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"문서 조회 실패: {e}")
 
 
 @app.post("/index-github-repo")
-async def index_github_repo(body: GitHubRepoRequest):
+async def index_github_repo(
+    body: GitHubRepoRequest, current_user: auth.UserInDB = Depends(get_current_user)
+):
     """
     GitHub 저장소 URL을 받아 Celery에 '백그라운드 인덱싱' 작업을 위임합니다.
     """
     try:
+        user_permission_groups = current_user.permission_groups
+        if not user_permission_groups:
+            user_permission_groups = ["all_users"]
+
         process_github_repo_indexing.delay(
-            repo_url=str(body.repo_url),  # Pydantic 모델을 문자열로 변환
-            permission_groups=body.permission_groups,
+            repo_url=str(body.repo_url),
+            permission_groups=user_permission_groups,  # 실제 사용자 권한 전달
         )
 
         repo_name = str(body.repo_url).split("/")[-1].replace(".git", "")
-        logger.info(f"'{repo_name}' 저장소를 Celery에 인덱싱 작업으로 위임했습니다.")
+        logger.info(
+            f"'{repo_name}' 저장소를 Celery에 위임 (User: {current_user.username}, Groups: {user_permission_groups})"
+        )
         return {
             "status": "success",
             "repo_name": repo_name,
@@ -396,6 +655,49 @@ async def index_github_repo(body: GitHubRepoRequest):
     except Exception as e:
         logger.error(f"GitHub 인덱싱 위임 중 에러 발생: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/documents", status_code=status.HTTP_200_OK)
+async def delete_indexed_document(
+    body: DeleteDocumentRequest,
+    request: Request,  # AgentBrain(VectorStore) 접근을 위해
+    current_user: auth.UserInDB = Depends(get_current_user),
+):
+    """
+    인덱싱된 지식 소스(파일, ZIP, 레포)를 삭제합니다.
+    사용자에게 해당 문서를 삭제할 권한(permission_groups)이 있어야 합니다.
+    """
+    try:
+        agent_brain = request.app.state.agent_brain
+        if not agent_brain or not isinstance(agent_brain.vector_store, PgVectorStore):
+            raise HTTPException(
+                status_code=500,
+                detail="Vector store (PgVectorStore)가 로드되지 않았습니다.",
+            )
+
+        deleted_count = await agent_brain.vector_store.delete_documents(
+            doc_id_or_prefix=body.doc_id_or_prefix,
+            permission_groups=current_user.permission_groups,  # [보안]
+        )
+
+        if deleted_count > 0:
+            return {
+                "status": "success",
+                "message": f"'{body.doc_id_or_prefix}' 관련 문서 {deleted_count}개 삭제 완료.",
+            }
+        else:
+            # 삭제할 문서가 없거나 (이미 삭제됨), 권한이 없는 경우
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="삭제할 문서를 찾지 못했거나, 해당 문서에 대한 삭제 권한이 없습니다.",
+            )
+
+    except Exception as e:
+        logger.error(f"문서 삭제 중 에러 발생: {e}", exc_info=True)
+        # 이미 HTTP 예외인 경우 그대로 전달
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"문서 삭제 실패: {e}")
 
 
 # --- 6. 서버 실행 ---

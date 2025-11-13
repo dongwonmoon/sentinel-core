@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
 
+    # JWT 인증을 위한 비밀 키
+    AUTH_SECRET_KEY: str
+
     # API 키
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
@@ -47,9 +50,7 @@ class Settings(BaseSettings):
     # --- config.yml 또는 기본값으로 관리되는 일반 설정 ---
     # 애플리케이션 정보
     APP_TITLE: str = "Sentinel RAG System"
-    APP_DESCRIPTION: str = (
-        "Enterprise-grade RAG system with advanced capabilities."
-    )
+    APP_DESCRIPTION: str = "Enterprise-grade RAG system with advanced capabilities."
     LOG_LEVEL: str = "INFO"
 
     # 벡터 스토어 설정
@@ -68,6 +69,11 @@ class Settings(BaseSettings):
 
     ANTHROPIC_MODEL_NAME: str = "claude-3-opus-20240229"
 
+    POWERFUL_LLM_TYPE: Literal["ollama", "openai", "anthropic"] = "ollama"
+    POWERFUL_API_BASE_URL: Optional[str] = "http://localhost:11435"  # (예: RunPod URL)
+    POWERFUL_MODEL_NAME: Optional[str] = "llama3:70b"
+    POWERFUL_LLM_TEMPERATURE: float = 0
+
     # 임베딩 모델 설정
     EMBEDDING_MODEL_TYPE: Literal["ollama", "huggingface", "openai"] = "ollama"
     OLLAMA_EMBEDDING_MODEL_NAME: str = "nomic-embed-text"
@@ -78,14 +84,16 @@ class Settings(BaseSettings):
 
     # Reranker 설정
     RERANKER_TYPE: Literal["none", "cohere", "cross_encoder"] = "none"
-    CROSS_ENCODER_MODEL_NAME: Optional[str] = (
-        "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    )
+    CROSS_ENCODER_MODEL_NAME: Optional[str] = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # 도구 설정
     TOOLS_ENABLED: List[
         Literal["duckduckgo_search", "google_search", "code_execution"]
     ] = ["duckduckgo_search"]
+
+    # JWT 인증 설정
+    AUTH_ALGORITHM: str = "HS256"
+    AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
     # --- 동적으로 계산되는 필드 ---
     @computed_field

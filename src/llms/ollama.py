@@ -19,7 +19,7 @@ class OllamaLLM(BaseLLM):
 
     _client: Runnable
 
-    def __init__(self, settings: Settings):
+    def __init__(self, base_url: str, model_name: str, temperature: float = 0):
         """
         OllamaLLM 클래스의 인스턴스를 초기화합니다.
 
@@ -27,13 +27,11 @@ class OllamaLLM(BaseLLM):
             settings: 애플리케이션의 설정을 담고 있는 Settings 객체입니다.
         """
         self._client = ChatOllama(
-            base_url=settings.OLLAMA_BASE_URL,
-            model=settings.OLLAMA_MODEL_NAME,
-            temperature=settings.OLLAMA_TEMPERATURE,
+            base_url=base_url,
+            model=model_name,
+            temperature=temperature,
         )
-        logger.info(
-            f"Ollama LLM 초기화 완료. 모델: {settings.OLLAMA_MODEL_NAME}"
-        )
+        logger.info(f"Ollama LLM 초기화 완료. 모델: {model_name}")
 
     @property
     def client(self) -> Runnable:
@@ -58,9 +56,7 @@ class OllamaLLM(BaseLLM):
         async for chunk in self.client.astream(messages, config=config):
             yield chunk
 
-    async def invoke(
-        self, messages: List[BaseMessage], config: Dict[str, Any]
-    ) -> Any:
+    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
         """
         Ollama 모델을 호출하여 전체 응답을 받습니다.
 
