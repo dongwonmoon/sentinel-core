@@ -1,13 +1,16 @@
 import { AuthResult } from "./AuthView";
 import MessageList from "./MessageList";
 import Composer from "./Composer";
-import { useChatSession } from "../hooks/useChatSession";
+import { Message } from "../hooks/useChatSession";
 
 type Props = {
   auth: AuthResult;
   documentOptions: { id: string; name: string }[];
   selectedDoc: string | null;
   onDocChange: (value: string | null) => void;
+  messages: Message[];
+  loading: boolean;
+  sendMessage: (payload: { query: string; docFilter?: string }) => Promise<void>;
 };
 
 export default function ChatWindow({
@@ -15,8 +18,11 @@ export default function ChatWindow({
   documentOptions,
   selectedDoc,
   onDocChange,
+  messages,
+  loading,
+  sendMessage,
 }: Props) {
-  const session = useChatSession(auth.token, selectedDoc);
+  // const session = useChatSession(auth.token, selectedDoc);
 
   return (
     <section className="chat-window">
@@ -39,11 +45,11 @@ export default function ChatWindow({
           ))}
         </select>
       </header>
-      <MessageList messages={session.messages} />
+      <MessageList messages={messages} />
       <Composer
-        disabled={session.loading}
+        disabled={loading}
         onSend={(text) =>
-          session.sendMessage({
+          sendMessage({
             query: text,
             docFilter: selectedDoc ?? undefined,
           })

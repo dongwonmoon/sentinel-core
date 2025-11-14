@@ -186,6 +186,7 @@ def process_document_indexing(
             for chunk in chunks:
                 chunk.metadata["doc_id"] = doc_id
                 chunk.metadata["source_type"] = "file-upload"
+                chunk.metadata["source"] = file_name
             all_chunks_to_index.extend(chunks)
             total_files_processed = 1
             os.remove(temp_file_path)

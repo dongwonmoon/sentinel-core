@@ -22,3 +22,4 @@ pg_data/
 # 기타
 README.md
 alembic.ini
+frontend/node_modules

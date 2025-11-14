@@ -82,6 +82,23 @@ class ChatHistoryResponse(BaseModel):
     messages: List[ChatMessageInDB]
 
 
+class ChatSession(BaseModel):
+    """GET /chat/sessions 응답의 개별 세션 정보"""
+
+    session_id: str
+    title: str  # 세션의 첫 번째 사용자 메시지
+    last_updated: datetime  # 세션의 마지막 활동 시간
+
+    class Config:
+        orm_mode = True
+
+
+class ChatSessionListResponse(BaseModel):
+    """GET /chat/sessions 응답 스키마"""
+
+    sessions: List[ChatSession]
+
+
 class QueryRequest(BaseModel):
     """POST /query/corporate 요청 스키마"""
 
@@ -92,6 +109,9 @@ class QueryRequest(BaseModel):
     )
     chat_history: Optional[List[ChatMessageBase]] = Field(
         default=None, description="이전 대화 기록"
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="현재 대화 세션을 식별하는 ID"
     )
 
 

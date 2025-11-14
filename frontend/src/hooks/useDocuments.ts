@@ -1,19 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { getApiBaseUrl } from "./useEnvironment";
-
-const API_BASE = getApiBaseUrl();
+import { apiRequest } from "../lib/apiClient";
 
 export function useDocuments(token: string) {
   return useQuery({
     queryKey: ["documents"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/documents`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const timestamp = Date.now().toString();
+      return apiRequest<Record<string, string>>(`/documents?t=${timestamp}`, {
+        token,
+        errorMessage: "문서 목록을 불러오지 못했습니다.",
       });
-      if (!res.ok) throw new Error("문서 목록을 불러오지 못했습니다.");
-      return res.json() as Promise<Record<string, string>>;
     },
   });
 }

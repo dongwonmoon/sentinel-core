@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from .. import dependencies, schemas
 from ...worker import tasks
+from ...worker.celery_app import celery_app
 from ...components.vector_stores.base import BaseVectorStore
 from ...components.vector_stores.pg_vector_store import PgVectorStore
 from ...core.agent import Agent
@@ -43,19 +44,26 @@ async def upload_and_index_document(
     파일을 업로드받아 Celery에 '백그라운드 인덱싱' 작업을 위임합니다.
     사용자의 권한 그룹이 문서에 태그로 지정됩니다.
     """
-    logger.info(f"사용자 '{current_user.username}'가 파일 업로드 및 인덱싱 시도: {file.filename}")
+    logger.info(
+        f"사용자 '{current_user.username}'가 파일 업로드 및 인덱싱 시도: {file.filename}"
+    )
     try:
         file_content = await file.read()
-        logger.debug(f"파일 '{file.filename}' 내용 읽음. 크기: {len(file_content)} 바이트.")
+        logger.debug(
+            f"파일 '{file.filename}' 내용 읽음. 크기: {len(file_content)} 바이트."
+        )
         # Celery 작업에 필요한 정보를 전달
-        tasks.process_document_indexing.delay(
+        task = tasks.process_document_indexing.delay(
             file_content=file_content,
             file_name=file.filename,
             permission_groups=current_user.permission_groups,
         )
-        logger.info(f"파일 '{file.filename}'에 대한 인덱싱 작업이 Celery 워커에 위임됨.")
+        logger.info(
+            f"파일 '{file.filename}'에 대한 인덱싱 작업이 Celery 워커에 위임됨."
+        )
         return {
             "status": "success",
+            "task_id": task.id,
             "filename": file.filename,
             "message": "File upload successful. Indexing has started in the background.",
         }
@@ -73,16 +81,21 @@ async def index_github_repo(
     """
     GitHub 저장소 URL을 받아 Celery에 '백그라운드 인덱싱' 작업을 위임합니다.
     """
-    logger.info(f"사용자 '{current_user.username}'가 GitHub 저장소 인덱싱 시도: {body.repo_url}")
+    logger.info(
+        f"사용자 '{current_user.username}'가 GitHub 저장소 인덱싱 시도: {body.repo_url}"
+    )
     try:
-        tasks.process_github_repo_indexing.delay(
+        task = tasks.process_github_repo_indexing.delay(
             repo_url=str(body.repo_url),
             permission_groups=current_user.permission_groups,
         )
         repo_name = str(body.repo_url).split("/")[-1].replace(".git", "")
-        logger.info(f"GitHub 저장소 '{repo_name}'에 대한 인덱싱 작업이 Celery 워커에 위임됨.")
+        logger.info(
+            f"GitHub 저장소 '{repo_name}'에 대한 인덱싱 작업이 Celery 워커에 위임됨."
+        )
         return {
             "status": "success",
+            "task_id": task.id,
             "repo_name": repo_name,
             "message": "GitHub repository cloning and indexing has started in the background.",
         }
@@ -166,10 +179,29 @@ async def get_indexed_documents(
         )
         return documents
     except Exception as e:
-        logger.exception(f"사용자 '{current_user.username}'의 인덱싱된 문서 조회 중 오류 발생.")
+        logger.exception(
+            f"사용자 '{current_user.username}'의 인덱싱된 문서 조회 중 오류 발생."
+        )
         raise HTTPException(
             status_code=500, detail=f"Failed to retrieve documents: {e}"
         )
+
+
+@router.get("/task-status/{task_id}", status_code=status.HTTP_200_OK)
+async def get_task_status(task_id: str):
+    """Celery 작업의 현재 상태를 반환합니다."""
+    logger.debug(f"작업 상태 확인 요청: {task_id}")
+    task_result = celery_app.AsyncResult(task_id)
+
+    status = task_result.status
+    result = task_result.result
+
+    if status == "FAILURE":
+        logger.warning(f"작업 {task_id} 실패: {result}")
+        # result가 Exception 객체일 수 있으므로 문자열로 변환
+        result = str(result)
+
+    return {"status": status, "result": result}
 
 
 @router.delete("", status_code=status.HTTP_200_OK)
@@ -182,7 +214,9 @@ async def delete_indexed_document(
     인덱싱된 지식 소스(파일, ZIP, 레포)를 삭제합니다.
     사용자에게 해당 문서를 삭제할 권한이 있어야 합니다.
     """
-    logger.info(f"사용자 '{current_user.username}'가 문서 삭제 시도: 접두사 '{body.doc_id_or_prefix}'.")
+    logger.info(
+        f"사용자 '{current_user.username}'가 문서 삭제 시도: 접두사 '{body.doc_id_or_prefix}'."
+    )
     vector_store = agent.vector_store
     if not isinstance(vector_store, PgVectorStore):
         logger.error("삭제는 PgVectorStore에서만 지원되지만, 다른 유형이 발견됨.")
@@ -206,13 +240,17 @@ async def delete_indexed_document(
             permission_groups=current_user.permission_groups,
         )
         if deleted_count > 0:
-            logger.info(f"접두사 '{body.doc_id_or_prefix}'에 해당하는 문서 {deleted_count}개(청크) 삭제 성공.")
+            logger.info(
+                f"접두사 '{body.doc_id_or_prefix}'에 해당하는 문서 {deleted_count}개(청크) 삭제 성공."
+            )
             return {
                 "status": "success",
                 "message": f"'{body.doc_id_or_prefix}' 및 관련 내용 ({deleted_count}개 청크) 삭제됨.",
             }
         else:
-            logger.warning(f"접두사 '{body.doc_id_or_prefix}'에 해당하는 문서를 찾을 수 없거나 사용자 '{current_user.username}'에게 권한이 없음.")
+            logger.warning(
+                f"접두사 '{body.doc_id_or_prefix}'에 해당하는 문서를 찾을 수 없거나 사용자 '{current_user.username}'에게 권한이 없음."
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No documents found to delete. They may have already been deleted or you may not have permission.",
@@ -221,6 +259,4 @@ async def delete_indexed_document(
         raise e
     except Exception as e:
         logger.exception(f"접두사 '{body.doc_id_or_prefix}' 문서 삭제 중 오류 발생.")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to delete document: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {e}")

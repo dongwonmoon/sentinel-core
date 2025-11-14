@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { AuthResult } from "./AuthView";
 import { notify } from "./NotificationHost";
-import { getApiBaseUrl } from "../hooks/useEnvironment";
-const API_BASE = getApiBaseUrl();
+import { apiRequest } from "../lib/apiClient";
+import { useTaskPolling, TaskStatusResponse } from "../hooks/useTaskPolling";
 
 type Props = {
   auth: AuthResult;
@@ -15,6 +15,17 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
   const [uploadLoading, setUploadLoading] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoLoading, setRepoLoading] = useState(false);
+  const { startPolling } = useTaskPolling({
+    token: auth.token,
+    onSuccess: (response) => {
+      notify(extractResultMessage(response, "인덱싱 완료!"));
+      onRefresh();
+    },
+    onFailure: (response) =>
+      notify(extractResultMessage(response, "인덱싱 실패")),
+    onError: (err) => notify(err.message),
+    onTimeout: () => notify("인덱싱 시간이 초과되었습니다."),
+  });
 
   async function handleUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -24,20 +35,18 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
     formData.append("file", fileInput.files[0]);
     setUploadLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/documents/upload-and-index`,
+      const result = await apiRequest<{ task_id: string }>(
+        "/documents/upload-and-index",
         {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-          },
+          token: auth.token,
           body: formData,
+          errorMessage: "업로드 실패",
         },
       );
-      if (!res.ok) throw new Error("업로드 실패");
       notify("업로드 및 인덱싱을 시작했습니다.");
       fileInput.value = "";
-      onRefresh();
+      startPolling(result.task_id);
     } catch (err) {
       notify(err instanceof Error ? err.message : "업로드 중 오류");
     } finally {
@@ -50,20 +59,18 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
     if (!repoUrl) return;
     setRepoLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/documents/index-github-repo`,
+      const result = await apiRequest<{ task_id: string }>(
+        "/documents/index-github-repo",
         {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ repo_url: repoUrl }),
+          token: auth.token,
+          json: { repo_url: repoUrl },
+          errorMessage: "레포 인덱싱 실패",
         },
       );
-      if (!res.ok) throw new Error("레포 인덱싱 실패");
       notify("GitHub 인덱싱을 시작했습니다.");
       setRepoUrl("");
+      startPolling(result.task_id);
     } catch (err) {
       notify(err instanceof Error ? err.message : "인덱싱 오류");
     } finally {
@@ -74,18 +81,12 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
   async function handleDelete(docId: string) {
     if (!confirm("정말 삭제하시겠습니까?")) return;
     try {
-      const res = await fetch(
-        `${API_BASE}/documents`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ doc_id_or_prefix: docId }),
-        },
-      );
-      if (!res.ok) throw new Error("삭제 실패");
+      await apiRequest("/documents", {
+        method: "DELETE",
+        token: auth.token,
+        json: { doc_id_or_prefix: docId },
+        errorMessage: "삭제 실패",
+      });
       notify("문서를 삭제했습니다.");
       onRefresh();
       onSelectDoc(null);
@@ -138,4 +139,13 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
       </section>
     </aside>
   );
+}
+
+function extractResultMessage(
+  response: TaskStatusResponse,
+  fallback: string,
+) {
+  if (!response.result) return fallback;
+  if (typeof response.result === "string") return response.result;
+  return response.result.message ?? fallback;
 }

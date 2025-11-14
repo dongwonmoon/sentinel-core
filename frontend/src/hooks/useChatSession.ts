@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { notify } from "../components/NotificationHost";
-
+import { apiRequest } from "../lib/apiClient";
 import { getApiBaseUrl } from "./useEnvironment";
 
 const API_BASE = getApiBaseUrl();
@@ -12,26 +12,92 @@ export type Message = {
   sources?: { display_name: string }[];
 };
 
+type ApiHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+type ApiChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 type PendingRequest = {
   query: string;
   top_k: number;
   doc_ids_filter: string[] | null;
-  chat_history: Message[];
+  chat_history: ApiChatMessage[];
+  session_id: string | null;
 };
 
-export function useChatSession(token: string, docFilter: string | null) {
+export function useChatSession(token: string, docFilter: string | null, sessionId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
 
+  useEffect(() => {
+    // sessionId가 없으면(예: '새 대화' 직후) 비우고 종료합니다.
+    if (!sessionId) {
+      setMessages([]);
+      sourceRef.current?.close();
+      setLoading(false);
+      return;
+    }
+
+    // sessionId가 있으면, 히스토리 로딩을 시작합니다.
+    setLoading(true);
+    sourceRef.current?.close(); // 진행 중인 스트리밍 중단
+
+    const fetchHistory = async () => {
+      try {
+        const data = await apiRequest<{ messages: ApiHistoryMessage[] }>(
+          `/chat/history/${sessionId}`,
+          {
+            token,
+            errorMessage: "대화 기록을 불러오지 못했습니다.",
+          },
+        );
+                
+        const mappedMessages: Message[] = data.messages.map((msg, index) => ({
+          id: `hist-${sessionId}-${index}`, // React key를 위한 고유 ID 생성
+          role: msg.role,
+          content: msg.content,          
+        }));
+
+        setMessages(mappedMessages); // 불러온 메시지로 상태를 설정
+        
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "기록 로딩 실패");
+        setMessages([]); // 오류 발생 시 비움
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+    
+  }, [sessionId, token]);
+
   const sendMessage = useCallback(
     async (payload: { query: string; docFilter?: string }) => {
       if (!payload.query.trim()) return;
+      if (!sessionId) {
+        notify("새 대화를 시작한 후 질문해주세요");
+        return;
+      }
+
+      const historyForApi: ApiChatMessage[] = messages.map(msg => ({
+          role: msg.role,
+          content: msg.content
+      }));
+
       const pending: PendingRequest = {
         query: payload.query,
         top_k: 3,
         doc_ids_filter: payload.docFilter ? [payload.docFilter] : null,
-        chat_history: [],
+        chat_history: historyForApi,
+        session_id: sessionId,
       };
       const outgoing: Message = {
         id: `user-${Date.now()}`,
@@ -50,7 +116,7 @@ export function useChatSession(token: string, docFilter: string | null) {
         ref: sourceRef,
       });
     },
-    [token],
+    [token, sessionId, docFilter, messages],
   );
 
   return { messages, sendMessage, loading };
