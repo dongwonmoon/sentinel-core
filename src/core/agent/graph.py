@@ -10,6 +10,13 @@ def _decide_branch(state: AgentState) -> str:
     return state.get("tool_choice", "None")
 
 
+def _check_rag_failure(state: AgentState) -> str:
+    """RAG 도구 실패 여부를 확인하여 분기합니다."""
+    if "RAG" in state.get("failed_tools", []):
+        return "retry"
+    return "continue"
+
+
 def build_graph(nodes: AgentNodes) -> StateGraph:
     """
     조건부 라우팅을 포함하는 LangGraph 워크플로우를 구성하고 컴파일합니다.
@@ -35,7 +42,12 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
             "None": "generate_final_answer",
         },
     )
-    workflow.add_edge("run_rag_tool", "generate_final_answer")
+    workflow.add_conditional_edges(
+        "run_rag_tool",
+        _check_rag_failure,
+        {"continue": "generate_final_answer", "retry": "route_query"},
+    )
+    # workflow.add_edge("run_rag_tool", "generate_final_answer")
     workflow.add_edge("run_web_search_tool", "generate_final_answer")
     workflow.add_edge("run_code_execution_tool", "generate_final_answer")
     workflow.add_edge("generate_final_answer", END)

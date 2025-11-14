@@ -16,9 +16,13 @@ Mapping guidance (apply the closest match):
 - Casual conversation or chit-chat → [Fast_LLM, None]
 
 Do NOT add salutations, explanations, or multiple lines.
+Do NOT choose a tool from the [FAILED TOOLS] list.
 
 [CHAT HISTORY]
 {history}
+
+[FAILED TOOLS]
+{failed_tools}
 
 [QUESTION]
 {question}
@@ -48,6 +52,13 @@ solves the user task. Requirements:
 - Use standard Python only.
 - Always print the final answer with print().
 - Do not add explanations or prose.
+
+[INTERNAL CODE CONTEXT]
+Here is some existing internal code from this company's codebase that might be relevant.
+You can use it as a reference for style, function names, and logic.
+---
+{context}
+---
 
 Example:
 # Question: Sum numbers 1 to 10

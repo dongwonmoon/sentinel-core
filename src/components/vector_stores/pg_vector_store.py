@@ -61,9 +61,7 @@ class PgVectorStore(BaseVectorStore):
         embeddings = self.embedding_model.embed_documents(
             [doc.page_content for doc in documents]
         )
-        doc_ids_to_clear = list(
-            set(doc.metadata.get("doc_id") for doc in documents)
-        )
+        doc_ids_to_clear = list(set(doc.metadata.get("doc_id") for doc in documents))
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():  # 트랜잭션 시작
@@ -124,9 +122,7 @@ class PgVectorStore(BaseVectorStore):
                             VALUES (:doc_id, :chunk_text, :embedding, :metadata)
                         """
                         )
-                        await session.execute(
-                            stmt_chunks_insert, chunk_data_list
-                        )
+                        await session.execute(stmt_chunks_insert, chunk_data_list)
 
                     logger.info(
                         f"{len(doc_infos)}개 문서, {len(documents)}개 청크 Upsert 완료."
@@ -145,6 +141,7 @@ class PgVectorStore(BaseVectorStore):
         allowed_groups: List[str],
         k: int = 4,
         doc_ids_filter: Optional[List[str]] = None,
+        source_type_filter: Optional[str] = None,
     ) -> List[Tuple[Document, float]]:
         """
         주어진 쿼리와 유사한 문서를 비동기적으로 검색합니다.
@@ -178,6 +175,10 @@ class PgVectorStore(BaseVectorStore):
         """
 
         params = {"allowed_groups": allowed_groups, "top_k": k}
+
+        if source_type_filter:
+            sql_query += " AND d.source_type = :source_type"
+            params["source_type"] = source_type_filter
 
         if doc_ids_filter:
             where_clauses = []

@@ -48,6 +48,7 @@ class AgentNodes:
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
             history="\n".join([f"{m.type}: {m.content}" for m in history]),
             question=question,
+            failed_tools=state.get("failed_tools", []),
         )
 
         response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
@@ -83,7 +84,9 @@ class AgentNodes:
         )
         if not retrieved:
             logger.info("RAG 검색 결과 없음 - 질문='%s'", state["question"][:80])
-            return {"tool_outputs": {"rag_chunks": []}}
+            failed = state.get("failed_tools", [])
+            failed.append("RAG")
+            return {"tool_outputs": {"rag_chunks": []}, "failed_tools": failed}
 
         reranked = self.reranker.rerank(state["question"], retrieved)
         final_docs = reranked[: state["top_k"]]
@@ -126,7 +129,36 @@ class AgentNodes:
                 "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
-        code_gen_prompt = prompts.CODE_GEN_PROMPT.format(question=state["question"])
+        logger.debug("CodeExecution: RAG로 사내 코드 컨텍스트 검색 시도...")
+        try:
+            code_docs, _ = await asyncio.wait_for(
+                self.vector_store.search(
+                    query=state["question"],
+                    allowed_groups=state["permission_groups"],
+                    k=3,  # 관련성 높은 코드 3개
+                    source_type_filter="github-repo",  # 2단계에서 구현한 필터 사용
+                ),
+                timeout=5.0,
+            )
+
+            if code_docs:
+                context_str = "\n\n---\n\n".join(
+                    [doc.page_content for doc, score in code_docs]
+                )
+                logger.info(
+                    "CodeExecution: %d개의 코드 스니펫을 컨텍스트로 주입.",
+                    len(code_docs),
+                )
+            else:
+                context_str = "No internal code context found."
+
+        except Exception as e:
+            logger.warning("CodeExecution: RAG 컨텍스트 검색 실패: %s", e)
+            context_str = "Error fetching code context."
+
+        code_gen_prompt = prompts.CODE_GEN_PROMPT.format(
+            question=state["question"], context=context_str
+        )
         response = await self.llm_powerful.invoke(
             [HumanMessage(content=code_gen_prompt)], config={}
         )

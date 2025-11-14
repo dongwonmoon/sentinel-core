@@ -21,6 +21,7 @@ class AgentState(TypedDict):
     tool_choice: str
     tool_outputs: Dict[str, Any]
     code_input: Optional[str] = None
+    failed_tools: Optional[List[str]] = None
 
     # 최종 출력
     answer: str

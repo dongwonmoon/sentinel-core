@@ -123,7 +123,18 @@ async def get_current_user(
     if user_row is None:
         raise credentials_exception
 
+    groups = set(user_row.permission_groups)
+
+    if "it_admin" in groups:
+        groups.add("it")
+    if "hr_admin" in groups:
+        groups.add("hr")
+
+    groups.add("all_users")
+
     user = schemas.UserInDB(**user_row._asdict())
+    user.permission_groups = list(groups)
+
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 

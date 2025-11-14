@@ -31,6 +31,8 @@ class BaseVectorStore(ABC):
         query: str,
         allowed_groups: List[str],
         k: int = 4,
+        doc_ids_filter: Optional[List[str]] = None,
+        source_type_filter: Optional[str] = None,
     ) -> List[Tuple[Document, float]]:
         """
         주어진 쿼리와 유사한 문서를 검색합니다.
