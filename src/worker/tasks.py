@@ -130,17 +130,28 @@ def process_document_indexing(
                     with zipfile.ZipFile(zip_buffer, "r") as zf:
                         zf.extractall(temp_dir)
 
+                all_files_found = []
+                filtered_files_log = []
+                processed_files_log = []
+
+                logger.info(f"--- [DEBUG] Starting os.walk for '{temp_dir}' ---")
+
                 for root, _, files in os.walk(temp_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
                         relative_path = os.path.relpath(file_path, temp_dir)
-                        if (
-                            any(
-                                part.startswith(".")
-                                for part in relative_path.split(os.sep)
-                            )
-                            or "__pycache__" in relative_path
-                        ):
+
+                        all_files_found.append(relative_path)
+                        logger.debug(f"Walker: Found file: '{relative_path}'")
+
+                        path_parts = relative_path.split(os.path.sep)
+                        is_hidden = any(part.startswith(".") for part in path_parts)
+                        is_pycache = "__pycache__" in relative_path
+
+                        if is_hidden or is_pycache:
+                            filtered_files_log.append(relative_path)
+                            logger.debug(f"Walker: Filtered file: '{relative_path}'")
+                            filtered_files_log.append(relative_path)
                             continue
 
                         try:
@@ -151,11 +162,12 @@ def process_document_indexing(
                                     text_splitter_default,
                                 )
                             )
-                            doc_id = f"file-upload-{file_name}/{relative_path}"
+                            base_doc_id_prefix = file_name.rsplit(".zip", 1)[0]
+                            doc_id = f"file-upload-{base_doc_id_prefix}/{relative_path}"
                             for chunk in chunks:
                                 chunk.metadata["doc_id"] = doc_id
                                 chunk.metadata["source_type"] = "file-upload-zip"
-                                chunk.metadata["original_zip"] = file_name
+                                chunk.metadata["original_zip"] = base_doc_id_prefix
                                 chunk.metadata["source"] = relative_path
 
                             all_chunks_to_index.extend(chunks)
@@ -182,6 +194,7 @@ def process_document_indexing(
                     temp_file_path, file_name, text_splitter_default
                 )
             )
+
             doc_id = f"file-upload-{file_name}"
             for chunk in chunks:
                 chunk.metadata["doc_id"] = doc_id
@@ -194,8 +207,46 @@ def process_document_indexing(
                 "단일 파일 처리 완료 - doc_id=%s, 청크=%d개", doc_id, len(chunks)
             )
 
-        if not all_chunks_to_index:
-            raise ValueError("No text could be extracted from the document.")
+        if total_files_processed == 0:
+            if not all_files_found and file_name.lower().endswith(".zip"):
+                # ZIP은 열렸지만 `os.walk`가 아무 파일도 찾지 못함 (e.g., 비어있음)
+                logger.error(
+                    f"No files were found inside the ZIP archive '{file_name}'. It might be empty."
+                )
+                raise ValueError(
+                    f"No files were found inside the ZIP archive '{file_name}'. It might be empty."
+                )
+
+            elif filtered_files_log and not processed_files_log:
+                # 모든 파일이 필터링됨
+                logger.error(
+                    f"All {len(all_files_found)} files in '{file_name}' were filtered. "
+                    f"Filtered examples: {filtered_files_log[:5]}"
+                )
+                raise ValueError(
+                    f"No files were processed. All {len(all_files_found)} files were filtered "
+                    f"(e.g., .git, .venv, __pycache__, or Mac resource forks like '._filename')."
+                )
+
+            elif processed_files_log and not all_chunks_to_index:
+                # 텍스트 추출 실패
+                logger.error(
+                    f"Processed {len(processed_files_log)} file(s) from '{file_name}', but no text was extracted. "
+                    f"Files attempted: {processed_files_log[:5]}"
+                )
+                raise ValueError(
+                    f"Processed {len(processed_files_log)} file(s), but no text could be extracted. "
+                    f"The files might be non-text (e.g., images) or empty."
+                )
+
+            else:
+                # 그 외 (e.g., 단일 파일 업로드인데 텍스트 추출 실패 등)
+                logger.error(
+                    f"Unknown state: {len(all_files_found)} found, {len(filtered_files_log)} filtered, {len(processed_files_log)} processed, 0 chunks."
+                )
+                raise ValueError(
+                    f"No files were processed. The archive '{file_name}' is empty or contains no valid files."
+                )
 
         asyncio.run(
             vector_store.upsert_documents(

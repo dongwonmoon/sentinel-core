@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { AuthResult } from "./AuthView";
 import { notify } from "./NotificationHost";
 import { apiRequest } from "../lib/apiClient";
@@ -15,6 +15,12 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
   const [uploadLoading, setUploadLoading] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoLoading, setRepoLoading] = useState(false);
+  const [knowledgeName, setKnowledgeName] = useState("");
+  const [uploadGroups, setUploadGroups] = useState<string[]>(["all_users"]);
+  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dirInputRef = useRef<HTMLInputElement>(null);
+
   const { startPolling } = useTaskPolling({
     token: auth.token,
     onSuccess: (response) => {
@@ -29,10 +35,30 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
 
   async function handleUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const fileInput = e.currentTarget.elements.namedItem("file") as HTMLInputElement;
-    if (!fileInput.files?.length) return;
+    if (!selectedFiles || selectedFiles.length === 0) {
+      notify("업로드할 파일 또는 디렉토리를 선택해야 합니다.");
+      return;
+    }
+    if (!knowledgeName.trim()) {
+      notify("지식 소스 이름을 입력해야 합니다.");
+      return;
+    }
+
     const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
+
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      // 디렉토리 선택 시 webkitRelativePath에 'MyProject/src/main.py'가 들어옴
+      // 파일 선택 시 file.name에 'main.py'가 들어옴
+      const path = (file as any).webkitRelativePath || file.name;
+      formData.append("files", file, path);
+    }
+
+    // 2. [수정] 👈 지식 소스 이름과 권한 그룹을 FormData에 추가
+    const displayName = knowledgeName.trim();
+    formData.append("display_name", displayName); // 👈 사용자가 입력한 이름
+    formData.append("permission_groups_json", JSON.stringify(uploadGroups));
+
     setUploadLoading(true);
     try {
       const result = await apiRequest<{ task_id: string }>(
@@ -44,9 +70,17 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
           errorMessage: "업로드 실패",
         },
       );
-      notify("업로드 및 인덱싱을 시작했습니다.");
-      fileInput.value = "";
+      notify(`'${displayName}' 인덱싱을 시작했습니다.`);
+      
+      // 상태 초기화
+      setKnowledgeName("");
+      setSelectedFiles(null);
+      e.currentTarget.reset();
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (dirInputRef.current) dirInputRef.current.value = "";
+      
       startPolling(result.task_id);
+      
     } catch (err) {
       notify(err instanceof Error ? err.message : "업로드 중 오류");
     } finally {
@@ -113,11 +147,78 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
       </section>
 
       <section>
-        <h4>파일 업로드</h4>
+        <h4>파일/디렉토리 업로드</h4>
         <form className="panel-form" onSubmit={handleUpload}>
-          <input type="file" name="file" accept=".txt,.md,.pdf,.zip" required />
-          <button type="submit" disabled={uploadLoading}>
-            {uploadLoading ? "업로드 중..." : "업로드"}
+          <label>
+            1. 지식 소스 이름 (필수)
+            <input
+              type="text"
+              value={knowledgeName}
+              onChange={(e) => setKnowledgeName(e.target.value)}
+              placeholder="e.g., 나의 파이썬 프로젝트"
+              required
+            />
+          </label>
+          <label>
+            2. 적용할 권한 그룹
+            <input
+              value={uploadGroups.join(",")}
+              onChange={(e) =>
+                setUploadGroups(e.target.value.split(",").map((g) => g.trim()))
+              }
+              placeholder="all_users, it"
+            />
+          </label>
+          <label>
+            3. 파일 또는 디렉토리 선택
+          </label>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={(e) => setSelectedFiles(e.target.files)}
+            multiple
+            style={{ display: "none" }}
+            accept=".txt,.md,.pdf,.py,.js,.ts,.java,.go,.c,.cpp,.h" // 👈 파일 제한
+          />
+          <input
+            type="file"
+            ref={dirInputRef}
+            onChange={(e) => setSelectedFiles(e.target.files)}
+            // @ts-ignore
+            webkitdirectory="true"
+            style={{ display: "none" }}
+          />
+          <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
+            <button
+              type="button"
+              className="ghost" //
+              onClick={() => fileInputRef.current?.click()}
+              style={{ flex: 1 }}
+            >
+              파일 선택
+            </button>
+            <button
+              type="button"
+              className="ghost" //
+              onClick={() => dirInputRef.current?.click()}
+              style={{ flex: 1 }}
+            >
+              디렉토리 선택
+            </button>
+          </div>
+          {/* 선택된 파일 정보 표시 */}
+          {selectedFiles && selectedFiles.length > 0 && (
+            <p className="muted" style={{ fontSize: '0.8rem', margin: '0.5rem 0 0 0' }}>
+              {selectedFiles.length}개 파일/디렉토리 선택됨
+            </p>
+          )}
+
+          {/* 최종 제출 버튼 */}
+          <button
+            type="submit"
+            disabled={uploadLoading || !selectedFiles?.length || !knowledgeName.trim()}
+          >
+            {uploadLoading ? "업로드 중..." : "업로드 시작"}
           </button>
         </form>
       </section>

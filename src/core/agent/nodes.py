@@ -217,6 +217,7 @@ class AgentNodes:
             context=context_str,
             question=state["question"],
             permission_groups=state["permission_groups"],
+            user_profile=state.get("user_profile", "Not specified"),
         )
         messages = history + [HumanMessage(content=prompt)]
 
@@ -225,3 +226,39 @@ class AgentNodes:
             full_answer += chunk.content
 
         return {"answer": full_answer}
+
+    async def output_guardrail(self, state: AgentState) -> Dict[str, Any]:
+        """[노드] 최종 답변을 검증하고, 위험할 경우 안전한 메시지로 대체합니다."""
+        logger.debug("--- [Agent Node: Output Guardrail] ---")
+        final_answer = state.get("answer", "")
+        if not final_answer.strip():
+            logger.debug("Guardrail: 빈 답변, 통과.")
+            return {"answer": final_answer}
+
+        prompt = prompts.GUARDRAIL_PROMPT_TEMPLATE.format(answer=final_answer)
+
+        try:
+            response = await asyncio.wait_for(
+                self.llm_fast.invoke([HumanMessage(content=prompt)], config={}),
+                timeout=3.0,  # 가드레일은 3초 이내에 응답해야 함
+            )
+            decision = response.content.strip().upper()
+
+            if "UNSAFE" in decision:
+                logger.warning(
+                    "Guardrail: 답변이 UNSAFE로 분류됨. 원본: '%s...'",
+                    final_answer[:100],
+                )
+                safe_answer = "보안 정책에 따라 답변을 수정했습니다. (This response has been modified according to security policies.)"
+                return {"answer": safe_answer}
+
+            logger.debug("Guardrail: 답변이 SAFE로 분류됨, 통과.")
+            return {"answer": final_answer}
+
+        except Exception as e:
+            logger.error("Guardrail: 가드레일 실행 중 오류 발생: %s", e)
+            # 안전을 위해 가드레일 실패 시에도 답변을 차단
+            safe_answer = (
+                f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            )
+            return {"answer": safe_answer}

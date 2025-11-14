@@ -37,6 +37,9 @@ If the context lacks the answer, clearly say you cannot find the information.
 [CONTEXT]
 {context}
 
+[USER PROFILE]
+{user_profile}
+
 [USER GROUPS]
 {permission_groups}
 
@@ -68,4 +71,22 @@ print(sum(range(1, 11)))
 print(123 * 456)
 
 # Question: {question}
+"""
+
+GUARDRAIL_PROMPT_TEMPLATE = """
+You are a content safety guardrail. Your job is to determine if the following AI-generated
+answer is safe to show to a user in a corporate environment.
+
+Check for:
+1.  Harmful content, harassment, or explicit language.
+2.  Bias or discriminatory remarks.
+3.  Leakage of sensitive Personal Identifiable Information (PII) like social security numbers,
+    phone numbers, or specific personal addresses.
+
+Respond with ONLY one word: "SAFE" or "UNSAFE".
+
+[AI-GENERATED ANSWER]
+{answer}
+
+[YOUR DECISION (SAFE or UNSAFE)]
 """

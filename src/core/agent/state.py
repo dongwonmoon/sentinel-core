@@ -15,6 +15,7 @@ class AgentState(TypedDict):
     top_k: int
     doc_ids_filter: Optional[List[str]]
     chat_history: List[Dict[str, str]]
+    user_profile: Optional[str] = None
 
     # 중간 상태
     chosen_llm: Literal["fast", "powerful"]

@@ -157,51 +157,102 @@ type StreamHandlers = {
   ref: React.MutableRefObject<EventSource | null>;
 };
 
-function streamQuery(
+async function streamQuery(
   token: string,
   body: PendingRequest,
   handlers: StreamHandlers,
 ) {
-  handlers.ref.current?.close();
-  const url = new URL(`${API_BASE}/chat/query-stream`);
-  url.searchParams.set("token", token);
-  url.searchParams.set("query_request", JSON.stringify(body));
-
-  const source = new EventSource(url.toString(), { withCredentials: false });
-  handlers.ref.current = source;
+  handlers.ref.current?.close(); // (EventSource 타입이 아니지만, AbortController로 대체 가능)
+  
+  // AbortController를 사용하여 요청 중단 기능 구현
+  const controller = new AbortController();
+  // @ts-ignore (ref 타입을 EventSource에서 AbortController로 변경)
+  handlers.ref.current = controller;
+  
   handlers.onStart();
   let ended = false;
   let hadData = false;
+  let accumulatedChunks = ""; // 토큰 누적
 
-  source.onmessage = (event) => {
-    if (!event.data) return;
-    const payload = JSON.parse(event.data);
-    console.log("SSE payload", payload);
-    if (payload.event === "token") {
-      hadData = true;
-      handlers.onToken(payload.data);
-    } else if (payload.event === "sources") {
-      hadData = true;
-      handlers.onSources(payload.data);
-    } else if (payload.event === "end") {
-      hadData = true;
-      ended = true;
-      handlers.onFinish();
-      source.close();
-    }
-  };
-
-  source.onerror = (error) => {
-    console.error("EventSource error", {
-      ended,
-      hadData,
-      readyState: source.readyState,
-      error,
+  try {
+    const response = await fetch(`${API_BASE}/chat/query-stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal, // 중단 신호
     });
-    if (!ended && !hadData && source.readyState !== EventSource.CLOSED) {
-      handlers.onError("스트리밍 연결이 끊어졌습니다.");
-      handlers.onFinish();
+
+    if (!response.ok) {
+      throw new Error(
+        `스트리밍 요청 실패 (${response.status} ${response.statusText})`,
+      );
     }
-    source.close();
-  };
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("스트림 리더를 가져올 수 없습니다.");
+    }
+
+    const decoder = new TextDecoder("utf-8");
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        if (!ended) { // 'end' 이벤트 없이 스트림이 종료된 경우
+          console.warn("Stream ended without explicit 'end' event.");
+          handlers.onFinish();
+        }
+        break;
+      }
+      
+      hadData = true;
+      const chunk = decoder.decode(value, { stream: true });
+      accumulatedChunks += chunk;
+
+      // SSE 메시지 형식 (data: {...}\n\n)에 따라 파싱
+      const lines = accumulatedChunks.split("\n\n");
+
+      // 마지막 라인은 다음 청크를 위해 누적
+      accumulatedChunks = lines.pop() || ""; 
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.substring(6);
+          const payload = JSON.parse(data);
+
+          if (payload.event === "token") {
+            handlers.onToken(payload.data);
+          } else if (payload.event === "sources") {
+            handlers.onSources(payload.data);
+          } else if (payload.event === "end") {
+            ended = true;
+            handlers.onFinish();
+            reader.releaseLock();
+            controller.abort(); // 스트림 종료
+            break;
+          }
+        }
+      }
+      if (ended) break;
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      console.log("Stream manually aborted.");
+      handlers.onFinish();
+    } else {
+      console.error("EventSource error", { error });
+      if (!ended && !hadData) {
+        handlers.onError(
+          error instanceof Error ? error.message : "스트리밍 연결이 끊어졌습니다.",
+        );
+        handlers.onFinish();
+      }
+    }
+  } finally {
+    // @ts-ignore
+    handlers.ref.current = null;
+  }
 }

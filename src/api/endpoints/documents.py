@@ -6,6 +6,9 @@ API 라우터: 문서 (Documents)
 """
 
 import json
+from typing import List
+import io
+import zipfile
 
 from fastapi import (
     APIRouter,
@@ -36,7 +39,9 @@ logger = get_logger(__name__)
 
 @router.post("/upload-and-index", status_code=status.HTTP_202_ACCEPTED)
 async def upload_and_index_document(
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
+    display_name: str = Form(...),
+    permission_groups_json: str = Form('["all_users"]'),
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
     _: None = Depends(dependencies.enforce_document_rate_limit),
 ):
@@ -44,32 +49,58 @@ async def upload_and_index_document(
     파일을 업로드받아 Celery에 '백그라운드 인덱싱' 작업을 위임합니다.
     사용자의 권한 그룹이 문서에 태그로 지정됩니다.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'가 파일 업로드 및 인덱싱 시도: {file.filename}"
-    )
     try:
-        file_content = await file.read()
-        logger.debug(
-            f"파일 '{file.filename}' 내용 읽음. 크기: {len(file_content)} 바이트."
+        permission_groups = json.loads(permission_groups_json)
+        if not isinstance(permission_groups, list):
+            raise ValueError("permission_groups must be a list.")
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid permission_groups format: {e}"
         )
-        # Celery 작업에 필요한 정보를 전달
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    try:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in files:
+                # 디렉토리 업로드 시 file.filename은 "folder/file.txt" 형태가 됨
+                file_path = file.filename or "unknown_file"
+
+                # 파일 내용을 읽어서 ZIP에 추가
+                file_content = await file.read()
+                zf.writestr(file_path, file_content)
+
+        # 버퍼의 시작으로 포인터 이동
+        zip_buffer.seek(0)
+        zip_content_bytes = zip_buffer.getvalue()
+
+        zip_filename_for_task = f"{display_name}.zip"
+
         task = tasks.process_document_indexing.delay(
-            file_content=file_content,
-            file_name=file.filename,
-            permission_groups=current_user.permission_groups,
+            file_content=zip_content_bytes,
+            file_name=zip_filename_for_task,
+            permission_groups=permission_groups,
         )
+
         logger.info(
-            f"파일 '{file.filename}'에 대한 인덱싱 작업이 Celery 워커에 위임됨."
+            f"파일 {len(files)}개를 '{zip_filename_for_task}' (크기: {len(zip_content_bytes)}B)으로 압축하여"
+            f" 인덱싱 작업(권한: {permission_groups}) 위임. Task ID: {task.id}"
         )
+
         return {
             "status": "success",
             "task_id": task.id,
-            "filename": file.filename,
-            "message": "File upload successful. Indexing has started in the background.",
+            "filename": f"{len(files)} files (as zip)",
+            "message": f"Successfully uploaded {len(files)} files as a single zip. Indexing started.",
         }
+
     except Exception as e:
-        logger.exception(f"파일 '{file.filename}' 업로드 및 인덱싱 중 오류 발생.")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"파일 {len(files)}개 업로드 및 ZIP 압축 중 오류 발생.")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process file upload: {e}"
+        )
 
 
 @router.post("/index-github-repo", status_code=status.HTTP_202_ACCEPTED)
@@ -157,6 +188,9 @@ async def get_indexed_documents(
 
             if source_type == "file-upload-zip":
                 zip_name = metadata_dict.get("original_zip") or row.doc_id
+                if not zip_name:
+                    # (Fallback)
+                    zip_name = row.doc_id.split("/")[0].replace("file-upload-", "")
                 filter_key = f"file-upload-{zip_name}/"
                 display_name = zip_name
             elif source_type == "github-repo":

@@ -55,6 +55,7 @@ class UserInDB(User):
     """DB에 저장된 사용자 모델 (해시된 비밀번호 포함)"""
 
     hashed_password: str
+    profile_text: Optional[str] = None
 
 
 # --- 2. 채팅 (Chat) 관련 스키마 ---

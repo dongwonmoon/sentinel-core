@@ -41,6 +41,7 @@ export default function ChatLayout({ auth, onSignOut }: Props) {
       <div className="app-shell">
         <Sidebar
           username={auth.username}
+          token={auth.token}
           onSignOut={onSignOut}
           conversations={chatSessions || []} // placeholder
           selectedConversation={activeSessionId}
@@ -52,9 +53,9 @@ export default function ChatLayout({ auth, onSignOut }: Props) {
           selectedDoc={selectedDoc}
           documentOptions={documentOptions}
           onDocChange={setSelectedDoc}
-          messages={session.messages}
-          loading={session.loading}
-          sendMessage={session.sendMessage}
+          messages={session?.messages ?? []}
+          loading={session?.loading ?? false}
+          sendMessage={session?.sendMessage}
         />
         <ContextPanel
           auth={auth}

@@ -18,7 +18,11 @@ from ..core.rate_limiter import rate_limiter
 from ..components.embeddings.base import BaseEmbeddingModel
 from ..components.vector_stores.base import BaseVectorStore
 from ..components.vector_stores.pg_vector_store import PgVectorStore
+from ..core.logger import get_logger
 from . import schemas
+
+
+logger = get_logger(__name__)
 
 # --- 핵심 컴포넌트 제공자 ---
 
@@ -116,7 +120,14 @@ async def get_current_user(
 
     token_data = verify_token(token, credentials_exception)
 
-    stmt = text("SELECT * FROM users WHERE username = :username")
+    stmt = text(
+        """
+        SELECT u.*, p.profile_text 
+        FROM users u
+        LEFT JOIN user_profile p ON u.user_id = p.user_id
+        WHERE u.username = :username
+    """
+    )
     result = await session.execute(stmt, {"username": token_data.username})
     user_row = result.fetchone()
 
@@ -139,6 +150,23 @@ async def get_current_user(
         raise HTTPException(status_code=400, detail="Inactive user")
 
     return user
+
+
+async def get_admin_user(
+    current_user: schemas.UserInDB = Depends(get_current_user),
+) -> schemas.UserInDB:
+    """
+    현재 사용자가 'admin' 권한 그룹을 가지고 있는지 확인합니다.
+    """
+    if "admin" not in current_user.permission_groups:
+        logger.warning(
+            f"사용자 '{current_user.username}'가 관리자 접근 시도 (권한 없음)."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required.",
+        )
+    return current_user
 
 
 async def enforce_chat_rate_limit(

@@ -29,6 +29,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
     workflow.add_node("run_web_search_tool", nodes.run_web_search_tool)
     workflow.add_node("run_code_execution_tool", nodes.run_code_execution_tool)
     workflow.add_node("generate_final_answer", nodes.generate_final_answer)
+    workflow.add_node("output_guardrail", nodes.output_guardrail)
 
     # 엣지 연결
     workflow.set_entry_point("route_query")
@@ -50,6 +51,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
     # workflow.add_edge("run_rag_tool", "generate_final_answer")
     workflow.add_edge("run_web_search_tool", "generate_final_answer")
     workflow.add_edge("run_code_execution_tool", "generate_final_answer")
-    workflow.add_edge("generate_final_answer", END)
+    workflow.add_edge("generate_final_answer", "output_guardrail")
+    workflow.add_edge("output_guardrail", END)
 
     return workflow.compile()

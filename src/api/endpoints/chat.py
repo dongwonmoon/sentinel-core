@@ -198,6 +198,7 @@ async def query_agent(
         ),
         "user_id": current_user.user_id,
         "session_id": body.session_id,
+        "user_profile": current_user.profile_text or "",
     }
     logger.debug(f"사용자 '{current_user.username}'를 위한 에이전트 입력 준비 완료.")
 
@@ -238,6 +239,7 @@ async def query_agent_stream(
         ),
         "user_id": current_user.user_id,
         "session_id": body.session_id,
+        "user_profile": current_user.profile_text or "",
     }
     logger.debug(f"사용자 '{current_user.username}'를 위한 에이전트 입력 준비 완료.")
 
@@ -371,3 +373,34 @@ async def _save_chat_message(
             exc_info=True,
         )
         print(f"채팅 메시지 저장 중 오류 발생: {e}")
+
+
+@router.get("/profile", response_model=dict)
+async def get_user_profile(
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    stmt = text("SELECT profile_text FROM user_profile WHERE user_id = :user_id")
+    result = await session.execute(stmt, {"user_id": current_user.user_id})
+    profile = result.fetchone()
+    return {"profile_text": profile.profile_text if profile else ""}
+
+
+@router.post("/profile", status_code=status.HTTP_204_NO_CONTENT)
+async def update_user_profile(
+    body: dict,  # e.g., {"profile_text": "I am a python developer"}
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    profile_text = body.get("profile_text", "")
+    stmt = text(
+        """
+        INSERT INTO user_profile (user_id, profile_text)
+        VALUES (:user_id, :profile_text)
+        ON CONFLICT (user_id) DO UPDATE SET profile_text = EXCLUDED.profile_text
+        """
+    )
+    await session.execute(
+        stmt, {"user_id": current_user.user_id, "profile_text": profile_text}
+    )
+    logger.info(f"사용자 '{current_user.username}' 프로필 업데이트 완료.")
