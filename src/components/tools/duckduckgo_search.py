@@ -12,5 +12,7 @@ def get_duckduckgo_search_tool() -> BaseTool:
     Returns:
         LangChain의 BaseTool 인터페이스를 따르는 DuckDuckGo 검색 도구 객체.
     """
+    tool = DuckDuckGoSearchRun()
+    tool.name = "duckduckgo_search"
     logger.info("DuckDuckGo 검색 도구 초기화 완료.")
-    return DuckDuckGoSearchRun()
+    return tool

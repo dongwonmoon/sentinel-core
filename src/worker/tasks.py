@@ -23,7 +23,9 @@ from langchain_text_splitters import (
 )
 
 # --- 1. 아키텍처에 따른 임포트 경로 수정 ---
-from ..core.config import settings
+from ..core.config import get_settings
+
+settings = get_settings()
 from ..core import factories
 from ..core.logger import get_logger
 from .celery_app import celery_app  # 생성된 Celery 앱 인스턴스를 임포트
@@ -54,6 +56,7 @@ async def _load_and_split_documents(
 ) -> List[any]:
     """파일을 종류에 맞는 로더와 스플리터로 분할합니다."""
     file_ext = os.path.splitext(file_name)[1].lower()
+    logger.debug("문서 스플릿 준비 - 파일='%s', 확장자='%s'", file_name, file_ext)
 
     if file_ext == ".pdf":
         loader = PyPDFLoader(temp_file_path)
@@ -90,11 +93,18 @@ def process_document_indexing(
     permission_groups: List[str],
 ):
     """파일 내용을 받아 인덱싱하는 Celery 작업입니다."""
-    logger.info(f"--- [Celery Task] '{file_name}' 인덱싱 시작 ---")
+    logger.info(
+        "--- [Celery Task] '%s' 인덱싱 시작 (권한=%s, 크기=%d바이트) ---",
+        file_name,
+        permission_groups,
+        len(file_content),
+    )
     try:
         # 새로운 팩토리 함수 시그니처에 맞게 컴포넌트 초기화
         embedding_model = factories.create_embedding_model(
-            settings.embedding, settings.OPENAI_API_KEY
+            embedding_settings=settings.embedding,
+            full_settings=settings,
+            openai_api_key=settings.OPENAI_API_KEY,
         )
         vector_store = factories.create_vector_store(
             settings.vector_store, settings, embedding_model
@@ -103,9 +113,7 @@ def process_document_indexing(
             chunk_size=1000, chunk_overlap=200
         )
     except Exception as e:
-        logger.error(
-            f"--- [Celery Task] 컴포넌트 초기화 실패: {e} ---", exc_info=True
-        )
+        logger.error(f"--- [Celery Task] 컴포넌트 초기화 실패: {e} ---", exc_info=True)
         return {
             "status": "error",
             "message": f"Component initialization failed: {e}",
@@ -146,14 +154,17 @@ def process_document_indexing(
                             doc_id = f"file-upload-{file_name}/{relative_path}"
                             for chunk in chunks:
                                 chunk.metadata["doc_id"] = doc_id
-                                chunk.metadata["source_type"] = (
-                                    "file-upload-zip"
-                                )
+                                chunk.metadata["source_type"] = "file-upload-zip"
                                 chunk.metadata["original_zip"] = file_name
                                 chunk.metadata["source"] = relative_path
 
                             all_chunks_to_index.extend(chunks)
                             total_files_processed += 1
+                            logger.debug(
+                                "ZIP 내 파일 처리 완료 - %s (청크 %d개)",
+                                relative_path,
+                                len(chunks),
+                            )
                         except Exception as e:
                             logger.warning(
                                 f"❌ ZIP 내 파일 '{relative_path}' 처리 실패: {e}"
@@ -178,6 +189,9 @@ def process_document_indexing(
             all_chunks_to_index.extend(chunks)
             total_files_processed = 1
             os.remove(temp_file_path)
+            logger.debug(
+                "단일 파일 처리 완료 - doc_id=%s, 청크=%d개", doc_id, len(chunks)
+            )
 
         if not all_chunks_to_index:
             raise ValueError("No text could be extracted from the document.")
@@ -208,11 +222,18 @@ def process_github_repo_indexing(
 ):
     """GitHub 저장소를 클론하고, 내부 파일들을 인덱싱하는 Celery 작업입니다."""
     repo_name = repo_url.split("/")[-1].replace(".git", "")
-    logger.info(f"--- [Celery Task] '{repo_name}' ({repo_url}) 클론 시작 ---")
+    logger.info(
+        "--- [Celery Task] '%s' (%s) 클론 및 인덱싱 시작 (권한=%s) ---",
+        repo_name,
+        repo_url,
+        permission_groups,
+    )
 
     try:
         embedding_model = factories.create_embedding_model(
-            settings.embedding, settings.OPENAI_API_KEY
+            embedding_settings=settings.embedding,
+            full_settings=settings,
+            openai_api_key=settings.OPENAI_API_KEY,
         )
         vector_store = factories.create_vector_store(
             settings.vector_store, settings, embedding_model
@@ -221,9 +242,7 @@ def process_github_repo_indexing(
             chunk_size=1000, chunk_overlap=200
         )
     except Exception as e:
-        logger.error(
-            f"--- [Celery Task] 컴포넌트 초기화 실패: {e} ---", exc_info=True
-        )
+        logger.error(f"--- [Celery Task] 컴포넌트 초기화 실패: {e} ---", exc_info=True)
         return {
             "status": "error",
             "message": f"Component initialization failed: {e}",
@@ -261,6 +280,11 @@ def process_github_repo_indexing(
 
                         all_chunks_to_index.extend(chunks)
                         total_files_processed += 1
+                        logger.debug(
+                            "GitHub 파일 처리 완료 - %s (청크 %d개)",
+                            relative_path,
+                            len(chunks),
+                        )
                     except Exception as e:
                         logger.warning(
                             f"❌ GitHub 레포 내 파일 '{relative_path}' 처리 실패: {e}"

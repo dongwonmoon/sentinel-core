@@ -5,7 +5,9 @@ Celery 워커를 실행할 때 이 파일을 진입점으로 사용합니다.
 """
 
 from celery import Celery
-from ..core.config import settings
+from ..core.config import get_settings
+
+settings = get_settings()
 
 # Celery 앱 인스턴스 생성
 # main='sentinel_tasks'는 태스크 이름의 기본 접두사가 됩니다.

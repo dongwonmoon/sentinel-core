@@ -67,7 +67,6 @@ def _convert_history_dicts_to_messages(
 class Agent:
     """
     LangGraph를 사용하여 RAG, 웹 검색 등을 조정하는 에이전트의 핵심 로직.
-    (기존 AgentBrain 클래스)
     """
 
     def __init__(
@@ -109,6 +108,11 @@ class Agent:
         """
         답변 생성을 스트리밍하고, 완료 후 감사 로그를 저장하는 새로운 메인 메서드.
         """
+        logger.debug(
+            "LangGraph 스트림 시작 - 질문='%s', 권한=%s",
+            inputs.get("question", "")[:80],
+            inputs.get("permission_groups"),
+        )
         final_state = None
         # LangGraph의 astream_events를 사용하여 각 노드의 이벤트를 스트리밍
         async for event in self.graph_app.astream_events(inputs, version="v1"):
@@ -121,6 +125,11 @@ class Agent:
         # 스트리밍이 모두 끝난 후, 최종 상태를 사용하여 감사 로그를 저장
         if final_state:
             try:
+                logger.debug(
+                    "LangGraph 스트림 종료 - 최종 선택 LLM=%s, 도구=%s",
+                    final_state.get("chosen_llm"),
+                    final_state.get("tool_choice"),
+                )
                 await self.save_audit_log(final_state, db_session)
             except Exception as e:
                 # 로그 저장에 실패해도 사용자 응답은 이미 완료되었으므로, 에러 로깅만 처리
@@ -175,6 +184,11 @@ class Agent:
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
         history = _convert_history_dicts_to_messages(state.get("chat_history", []))
+        logger.debug(
+            "라우터 입력 - history=%d개, doc_filter=%s",
+            len(history),
+            state.get("doc_ids_filter"),
+        )
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
             history="\n".join([f"{m.type}: {m.content}" for m in history]),
             question=question,
@@ -213,10 +227,16 @@ class Agent:
             doc_ids_filter=state.get("doc_ids_filter"),
         )
         if not retrieved:
+            logger.info("RAG 검색 결과 없음 - 질문='%s'", state["question"][:80])
             return {"tool_outputs": {"rag_chunks": []}}
 
         reranked = self.reranker.rerank(state["question"], retrieved)
         final_docs = reranked[: state["top_k"]]
+        logger.info(
+            "RAG 검색 완료 - 원본 %d건, 리랭크 후 %d건",
+            len(retrieved),
+            len(final_docs),
+        )
 
         dict_docs = [
             {
@@ -233,6 +253,7 @@ class Agent:
         logger.debug("--- [Agent Node: WebSearch Tool] ---")
         tool = self.tools.get("duckduckgo_search")
         if not tool:
+            logger.warning("웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음")
             return {
                 "tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}
             }
@@ -245,6 +266,7 @@ class Agent:
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
+            logger.warning("코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음")
             return {
                 "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
@@ -252,17 +274,18 @@ class Agent:
         # 1. Powerful LLM으로 실행할 코드 생성
         code_gen_prompt = prompts.CODE_GEN_PROMPT.format(question=state["question"])
         response = await self.llm_powerful.invoke(
-            [HumanMessage(content=code_gen_prompt)]
+            [HumanMessage(content=code_gen_prompt)], config={}
         )
         code_to_run = (
             response.content.strip().replace("```python", "").replace("```", "")
         )
-        logger.info(f"--- 실행할 코드 생성:\n{code_to_run}\n---")
+        logger.info("코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run))
 
         # 2. 생성된 코드 실행 (동기 함수이므로 스레드에서 실행)
         import asyncio
 
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
+        logger.debug("코드 실행 결과 수신 - result='%s...'", str(code_result)[:120])
 
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result)
@@ -275,6 +298,11 @@ class Agent:
             self.llm_powerful
             if state.get("chosen_llm") == "powerful"
             else self.llm_fast
+        )
+        logger.debug(
+            "최종 답변 생성 - 선택된 LLM=%s, tool_choice=%s",
+            "powerful" if llm is self.llm_powerful else "fast",
+            state.get("tool_choice"),
         )
 
         # 컨텍스트 구성

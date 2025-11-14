@@ -10,7 +10,9 @@ from alembic import context
 # --- Sentinel-Core Integration ---
 # 프로젝트 루트를 sys.path에 추가하여 'src' 모듈을 찾을 수 있도록 함
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
-from src.core.config import settings
+from src.core.config import get_settings
+
+settings = get_settings()
 
 # --- End Integration ---
 
@@ -71,9 +73,7 @@ def run_migrations_online() -> None:
     connectable = create_engine(settings.SYNC_DATABASE_URL)
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

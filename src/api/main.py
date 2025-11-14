@@ -5,9 +5,16 @@ FastAPI 애플리케이션의 메인 진입점(Entrypoint)입니다.
 - CORS 등 미들웨어 설정
 """
 
-from fastapi import FastAPI
+import time
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from ..core.config import settings
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from ..core.config import get_settings
+
+settings = get_settings()
+from ..core.metrics import collector, router as metrics_router
 from .endpoints import auth, chat, documents
 
 # FastAPI 앱 인스턴스 생성
@@ -33,6 +40,20 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(documents.router)
+app.include_router(metrics_router)
+
+
+class RequestTimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration = time.perf_counter() - start
+        path = request.url.path
+        collector.observe_request(path, duration)
+        return response
+
+
+app.add_middleware(RequestTimingMiddleware)
 
 
 @app.get("/", tags=["Root"])

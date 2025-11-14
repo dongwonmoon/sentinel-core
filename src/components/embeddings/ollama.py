@@ -27,6 +27,9 @@ class OllamaEmbedding(BaseEmbeddingModel):
             model=model_name,
         )
         logger.info(f"Ollama 임베딩 모델 초기화 완료. 모델: {model_name}")
+        logger.warning(
+            f"[OLLAMA DEBUG] OllamaEmbedding initialized with base_url={base_url}"
+        )
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
@@ -38,7 +41,12 @@ class OllamaEmbedding(BaseEmbeddingModel):
         Returns:
             각 텍스트에 대한 임베딩 벡터의 리스트를 반환합니다.
         """
-        return self.client.embed_documents(texts)
+        try:
+            return self.client.embed_documents(texts)
+        except Exception as e:
+            logger.error("OLLAMA EMBEDDING ERROR")
+            logger.exception(e)  # full stack trace 출력
+            raise
 
     def embed_query(self, text: str) -> List[float]:
         """
@@ -50,4 +58,9 @@ class OllamaEmbedding(BaseEmbeddingModel):
         Returns:
             주어진 텍스트에 대한 임베딩 벡터를 반환합니다.
         """
-        return self.client.embed_query(text)
+        try:
+            return self.client.embed_query(text)
+        except Exception as e:
+            logger.error("OLLAMA QUERY EMBEDDING ERROR")
+            logger.exception(e)
+            raise

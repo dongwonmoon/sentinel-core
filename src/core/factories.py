@@ -25,7 +25,7 @@ from ..components.tools.base import BaseTool
 
 def create_llm(
     llm_settings: LLMSettings,
-    full_settings: Settings, # Add full_settings here
+    full_settings: Settings,  # Add full_settings here
     # 필요한 API 키는 의존성 주입 시 외부에서 전달받음
     openai_api_key: Optional[str] = None,
     anthropic_api_key: Optional[str] = None,
@@ -61,25 +61,46 @@ def create_llm(
 
 def create_embedding_model(
     embedding_settings: EmbeddingSettings,
+    full_settings: Optional[Settings] = None,
     openai_api_key: Optional[str] = None,
 ) -> BaseEmbeddingModel:
     """설정에 맞는 임베딩 모델 인스턴스를 생성합니다."""
     if embedding_settings.provider == "ollama":
         from ..components.embeddings.ollama import OllamaEmbedding
+        import logging
 
-        return OllamaEmbedding(model_name=embedding_settings.model_name)
+        logger = logging.getLogger("embedding.debug")
+
+        logger.warning(
+            f"[DEBUG] EMBEDDING SETTINGS api_base={embedding_settings.api_base}"
+        )
+        logger.warning(
+            f"[DEBUG] OLLAMA_BASE_URL from Settings={getattr(full_settings,'OLLAMA_BASE_URL', None)}"
+        )
+
+        base_url = None
+        if getattr(embedding_settings, "api_base", None):
+            base_url = embedding_settings.api_base
+        elif full_settings and getattr(full_settings, "OLLAMA_BASE_URL", None):
+            base_url = full_settings.OLLAMA_BASE_URL
+
+        logger.warning(f"[DEBUG] FINAL base_url USED FOR EMBEDDING = {base_url}")
+
+        return OllamaEmbedding(
+            model_name=embedding_settings.model_name, base_url=base_url
+        )
     elif embedding_settings.provider == "openai":
         from ..components.embeddings.openai import OpenAIEmbedding
 
         return OpenAIEmbedding(
-            model_name=embedding_settings.model_name, api_key=openai_api_key
+            model_name=embedding_settings.model_name,
+            api_key=openai_api_key,
+            base_url=getattr(embedding_settings, "api_base", None),
         )
     # (필요 시) HuggingFace 등 다른 프로바이더 추가
     # elif embedding_settings.provider == "huggingface":
     #     ...
-    raise ValueError(
-        f"Unsupported embedding provider: {embedding_settings.provider}"
-    )
+    raise ValueError(f"Unsupported embedding provider: {embedding_settings.provider}")
 
 
 def create_vector_store(
@@ -92,9 +113,7 @@ def create_vector_store(
     if vs_settings.provider == "pg_vector":
         from ..components.vector_stores.pg_vector_store import PgVectorStore
 
-        return PgVectorStore(
-            settings=full_settings, embedding_model=embedding_model
-        )
+        return PgVectorStore(settings=full_settings, embedding_model=embedding_model)
     if vs_settings.provider == "milvus":
         from ..components.vector_stores.milvus_vector_store import (
             MilvusVectorStore,
@@ -103,9 +122,7 @@ def create_vector_store(
         return MilvusVectorStore(
             settings=full_settings, embedding_model=embedding_model
         )
-    raise ValueError(
-        f"Unsupported vector store provider: {vs_settings.provider}"
-    )
+    raise ValueError(f"Unsupported vector store provider: {vs_settings.provider}")
 
 
 def create_reranker(
@@ -125,9 +142,7 @@ def create_reranker(
     # (필요 시) Cohere 등 다른 프로바이더 추가
     # elif reranker_settings.provider == "cohere":
     #     ...
-    raise ValueError(
-        f"Unsupported reranker provider: {reranker_settings.provider}"
-    )
+    raise ValueError(f"Unsupported reranker provider: {reranker_settings.provider}")
 
 
 def get_tools(enabled_tools_config: List[str]) -> List[BaseTool]:

@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: sentinel_api
     entrypoint: ["/app/entrypoint.sh"]
-    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
     ports:
       - "8000:8000"
     volumes:
@@ -50,7 +50,7 @@ services:
       context: dockerfiles/.
       dockerfile: Dockerfile.worker
     container_name: sentinel_worker
-    command: celery -A src.worker.celery_app:celery_app worker --loglevel=info
+    command: celery -A src.worker.celery_app:celery_app worker --loglevel=debug
     volumes:
       - .:/app
       - ./config.yml:/app/config.yml:ro
@@ -71,16 +71,13 @@ services:
 
   ui:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: sentinel_ui_frontend
+      context: .
+      dockerfile: dockerfiles/Dockerfile.ui
+    container_name: sentinel_ui
     ports:
-      - "3000:3000" # Next.js default port
-    # environment:
-      # NEXT_PUBLIC_API_BASE_URL is now handled by the default in apiClient.ts
-      # which correctly points to http://localhost:8000 for browser access.
-      # We only need the AUTH_SECRET_KEY for the old UI, which is now removed.
-      # This can be cleaned up further, but for now, we leave it empty.
+      - "4173:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
     depends_on:
       - api
     restart: always

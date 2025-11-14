@@ -5,6 +5,7 @@ app:
   title: "Sentinel RAG System"
   description: "Enterprise-grade RAG system with advanced capabilities."
   log_level: "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(funcName)s - %(message)s"
 
 # LLM(Large Language Model) 설정
 llm:
@@ -13,7 +14,7 @@ llm:
     # provider: "ollama", "openai", "anthropic" 중 선택
     provider: "ollama"
     model_name: "granite4:350m"
-    api_base: "http://localhost:11435"
+    # api_base: "http://localhost:11435"
     temperature: 0
 
   # 강력한 LLM: 코드 생성, 복잡한 추론 등 고성능이 필요한 작업에 사용
@@ -31,6 +32,7 @@ embedding:
   provider: "ollama"
   # provider가 ollama 또는 openai일 경우, 이 모델 이름을 사용합니다.
   model_name: "nomic-embed-text"
+  # api_base: "http://localhost:11435"
   # provider가 huggingface일 경우, 이 모델 이름을 사용합니다.
   # huggingface_model_name: "sentence-transformers/all-MiniLM-L6-v2"
 

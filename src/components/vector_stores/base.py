@@ -45,3 +45,19 @@ class BaseVectorStore(ABC):
             (Document, 유사도 점수) 튜플의 리스트를 반환합니다.
         """
         pass
+
+    @abstractmethod
+    async def delete_documents(
+        self, doc_id_or_prefix: str, permission_groups: List[str]
+    ) -> int:
+        """
+        주어진 doc_id 또는 접두사(prefix)에 해당하는 문서를 삭제합니다.
+
+        Args:
+            doc_id_or_prefix: 정확한 문서 ID 또는 'github-repo-name/' 같은 접두사.
+            permission_groups: 삭제 권한 검증용 그룹 리스트.
+
+        Returns:
+            삭제된 documents 레코드 수.
+        """
+        pass

@@ -7,6 +7,12 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+from functools import lru_cache
+
+
+@lru_cache()
+def get_settings():
+    return Settings()
 
 
 # --- 1. YAML 로더 함수 ---
@@ -31,6 +37,7 @@ class AppSettings(BaseModel):
     title: str = "Sentinel RAG System"
     description: str = "Enterprise-grade RAG system with advanced capabilities."
     log_level: str = "INFO"
+    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(funcName)s - %(message)s"
 
 
 class LLMSettings(BaseModel):
@@ -54,6 +61,7 @@ class EmbeddingSettings(BaseModel):
 
     provider: Literal["ollama", "openai", "huggingface"]
     model_name: str
+    api_base: Optional[str] = None
 
 
 class VectorStoreSettings(BaseModel):
@@ -112,9 +120,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings
     vector_store: VectorStoreSettings
     reranker: RerankerSettings
-    tools_enabled: List[
-        Literal["duckduckgo_search", "google_search", "code_execution"]
-    ]
+    tools_enabled: List[Literal["duckduckgo_search", "google_search", "code_execution"]]
 
     # --- 동적으로 계산되는 필드 ---
     @computed_field
@@ -174,8 +180,3 @@ class Settings(BaseSettings):
             yaml_config_settings_source,
             file_secret_settings,
         )
-
-
-# --- 4. 설정 인스턴스 생성 ---
-# 애플리케이션 전반에서 이 settings 객체를 import하여 사용합니다.
-settings = Settings()

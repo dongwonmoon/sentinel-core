@@ -11,6 +11,7 @@ __pycache__/
 Dockerfile
 docker-compose.yml
 dockerfiles
+!dockerfiles/nginx-ui.conf
 pg_data/
 
 # IDE / OS

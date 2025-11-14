@@ -14,6 +14,7 @@ from ..core import factories
 from ..core.agent import Agent
 from ..core.config import Settings
 from ..core.security import verify_token
+from ..core.rate_limiter import rate_limiter
 from ..components.embeddings.base import BaseEmbeddingModel
 from ..components.vector_stores.base import BaseVectorStore
 from ..components.vector_stores.pg_vector_store import PgVectorStore
@@ -25,9 +26,9 @@ from . import schemas
 @lru_cache
 def get_settings() -> Settings:
     """설정 객체를 반환합니다. lru_cache를 통해 앱 전체에서 싱글톤으로 동작합니다."""
-    from ..core.config import settings
+    from ..core.config import get_settings
 
-    return settings
+    return get_settings()
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
@@ -43,20 +44,20 @@ def get_agent() -> Agent:
 
     # 1. 핵심 컴포넌트 생성
     embedding_model = factories.create_embedding_model(
-        settings.embedding, settings.OPENAI_API_KEY
+        settings.embedding, settings, settings.OPENAI_API_KEY
     )
     vector_store = factories.create_vector_store(
         settings.vector_store, settings, embedding_model
     )
-    fast_llm = factories.create_llm(settings.llm.fast, settings, settings.OPENAI_API_KEY)
+    fast_llm = factories.create_llm(
+        settings.llm.fast, settings, settings.OPENAI_API_KEY
+    )
     powerful_llm = factories.create_llm(
         settings.llm.powerful,
         settings,
         settings.POWERFUL_OLLAMA_API_KEY or settings.OPENAI_API_KEY,
     )
-    reranker = factories.create_reranker(
-        settings.reranker, settings.COHERE_API_KEY
-    )
+    reranker = factories.create_reranker(settings.reranker, settings.COHERE_API_KEY)
     tools = factories.get_tools(settings.tools_enabled)
 
     # 2. Agent 인스턴스화
@@ -127,3 +128,27 @@ async def get_current_user(
         raise HTTPException(status_code=400, detail="Inactive user")
 
     return user
+
+
+async def enforce_chat_rate_limit(
+    current_user: schemas.UserInDB = Depends(get_current_user),
+) -> None:
+    try:
+        await rate_limiter.assert_within_limit("chat", str(current_user.user_id))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+        ) from exc
+
+
+async def enforce_document_rate_limit(
+    current_user: schemas.UserInDB = Depends(get_current_user),
+) -> None:
+    try:
+        await rate_limiter.assert_within_limit("documents", str(current_user.user_id))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+        ) from exc
