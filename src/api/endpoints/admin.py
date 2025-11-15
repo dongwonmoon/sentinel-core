@@ -85,7 +85,9 @@ async def update_user_permissions(
     )
     old_user = result.fetchone()
     if not old_user:
-        logger.warning(f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다.")
+        logger.warning(
+            f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다."
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
@@ -156,7 +158,9 @@ async def create_registered_tool(
         )
         return new_tool
     except sa.exc.IntegrityError:
-        logger.warning(f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다.")
+        logger.warning(
+            f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다."
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A tool with this name already exists.",
@@ -294,7 +298,9 @@ async def get_agent_audit_logs(
     return logs
 
 
-@router.put("/documents/{doc_id}/permissions", summary="문서 권한 업데이트 (미구현)")
+@router.put(
+    "/documents/{doc_id}/permissions", summary="문서 권한 업데이트 (미구현)"
+)
 async def update_document_permissions(
     doc_id: str,
     body: schemas.UpdatePermissionsRequest,
