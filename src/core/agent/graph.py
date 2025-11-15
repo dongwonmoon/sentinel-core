@@ -36,7 +36,7 @@ def _decide_branch(state: AgentState) -> str:
     logger.info(f"라우팅 결정: '{tool_choice}' 도구를 선택했습니다.")
 
     # 예기치 않은 tool_choice 값에 대한 안전장치. "None"으로 처리하여 바로 답변 생성으로 넘어갑니다.
-    if tool_choice not in ["RAG", "WebSearch", "CodeExecution", "None"]:
+    if tool_choice not in ["RAG", "WebSearch", "CodeExecution", "DynamicTool", "None"]:
         logger.warning(
             f"예상치 못한 도구 '{tool_choice}'가 선택되었습니다. 'None'으로 처리합니다."
         )
@@ -93,6 +93,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
     workflow.add_node("run_rag_tool", nodes.run_rag_tool)
     workflow.add_node("run_web_search_tool", nodes.run_web_search_tool)
     workflow.add_node("run_code_execution_tool", nodes.run_code_execution_tool)
+    workflow.add_node("run_dynamic_tool", nodes.run_dynamic_tool)
     workflow.add_node("generate_final_answer", nodes.generate_final_answer)
     workflow.add_node("output_guardrail", nodes.output_guardrail)
 
@@ -114,6 +115,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
             "RAG": "run_rag_tool",
             "WebSearch": "run_web_search_tool",
             "CodeExecution": "run_code_execution_tool",
+            "DynamicTool": "run_dynamic_tool",
             "None": "generate_final_answer",  # 도구가 필요 없으면 바로 답변 생성으로
         },
     )
@@ -134,6 +136,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
     # 다른 도구 노드들은 실행 완료 후 항상 'generate_final_answer' 노드로 이동하는 일반 엣지를 추가합니다.
     workflow.add_edge("run_web_search_tool", "generate_final_answer")
     workflow.add_edge("run_code_execution_tool", "generate_final_answer")
+    workflow.add_edge("run_dynamic_tool", "generate_final_answer")
     logger.debug(
         "WebSearch 및 CodeExecution 도구에서 'generate_final_answer'로의 엣지를 추가했습니다."
     )
@@ -146,9 +149,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
 
     # 가드레일 통과 후, 그래프 실행을 종료합니다. (END는 LangGraph의 특별한 노드 이름)
     workflow.add_edge("output_guardrail", END)
-    logger.debug(
-        "'output_guardrail'에서 그래프 종료(END)로의 엣지를 추가했습니다."
-    )
+    logger.debug("'output_guardrail'에서 그래프 종료(END)로의 엣지를 추가했습니다.")
 
     # --- 3. 그래프 컴파일 ---
     # 위에서 정의된 노드와 엣지 구성을 바탕으로 실행 가능한 객체를 생성하여 반환합니다.

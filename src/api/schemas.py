@@ -207,6 +207,29 @@ class UpdatePermissionsRequest(BaseModel):
     groups: List[str] = Field(..., description="새롭게 할당할 권한 그룹 목록")
 
 
+class ToolBase(BaseModel):
+    name: str = Field(..., description="도구 이름 (예: jira_create_ticket)")
+    description: str = Field(..., description="LLM을 위한 도구 설명")
+    api_endpoint_url: HttpUrl = Field(..., description="호출할 API 엔드포인트")
+    json_schema: Dict[str, Any] = Field(..., description="인자의 JSON Schema")
+    permission_groups: List[str] = Field(default_factory=lambda: ["admin"])
+    is_active: bool = True
+
+
+class ToolCreate(ToolBase):
+    pass
+
+
+class ToolUpdate(ToolBase):
+    pass
+
+
+class ToolResponse(ToolBase):
+    tool_id: int
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
 class AdminAuditLog(BaseModel):
     """관리자 감사 로그 응답 스키마"""
 

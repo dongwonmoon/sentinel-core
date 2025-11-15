@@ -7,20 +7,26 @@ Agent의 각 노드(Node)에 대한 실제 실행 로직을 정의합니다.
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, List
 from sqlalchemy import select, text
+import httpx
+import json
 
 from langchain_core.messages import HumanMessage
+from langchain_core.utils.pydantic import PydanticBaseModel
 
 from .. import prompts
 from ...components.llms.base import BaseLLM
 from ...components.rerankers.base import BaseReranker
 from ...components.tools.base import BaseTool
 from ...components.vector_stores.base import BaseVectorStore
+from ...db import models
 from ..logger import get_logger
-from .state import AgentState, convert_history_dicts_to_messages
+from .state import AgentState, convert_history_dicts_to_messages, DynamicTool
 
 logger = get_logger(__name__)
+
+http_client = httpx.AsyncClient(timeout=10.0)
 
 
 class AgentNodes:
@@ -44,9 +50,7 @@ class AgentNodes:
         self.reranker = reranker
         self.tools = tools
 
-        self.AsyncSessionLocal = getattr(
-            vector_store, "AsyncSessionLocal", None
-        )
+        self.AsyncSessionLocal = getattr(vector_store, "AsyncSessionLocal", None)
         if not self.AsyncSessionLocal:
             logger.warning("AgentNodes: DB 세션 팩토리를 찾을 수 없습니다.")
 
@@ -64,6 +68,7 @@ class AgentNodes:
             """A. 최근 3개의 대화만 원본 그대로 가져옵니다."""
             try:
                 # AgentState에 있는 전체 히스토리 사용
+                # 3개 하드 코딩. 일단 보류
                 recent_turns = state.get("chat_history", [])[-3:]
                 if not recent_turns:
                     return ""
@@ -137,35 +142,56 @@ class AgentNodes:
                     ]  # (임계값 0.8)
 
                 if not relevant_turns:
-                    logger.debug(
-                        "하이브리드 컨텍스트(C): 관련 '사건 기억' 없음."
-                    )
+                    logger.debug("하이브리드 컨텍스트(C): 관련 '사건 기억' 없음.")
                     return ""
 
                 logger.debug(
                     f"하이브리드 컨텍스트(C): 관련 '사건 기억' {len(relevant_turns)}개 인출."
                 )
-                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(
-                    relevant_turns
-                )
+                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(relevant_turns)
 
             except Exception as e:
-                logger.warning(
-                    f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True
-                )
+                logger.warning(f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True)
                 return ""
 
-        # [실행] 3가지 메모리 인출을 병렬로 실행
+        async def get_available_dynamic_tools() -> List[DynamicTool]:
+            """D. 사용자의 권한 그룹과 일치하는 '동적 도구'를 DB에서 로드합니다."""
+            if not self.AsyncSessionLocal:
+                return []
+            try:
+                sql_query = """
+                    SELECT name, description, api_endpoint_url, json_schema, permission_groups
+                    FROM registered_tools
+                    WHERE is_active = true
+                    AND permission_groups && :allowed_groups
+                """
+                async with self.AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        text(sql_query), {"allowed_groups": state["permission_groups"]}
+                    )
+                    tools = [DynamicTool(**row._asdict()) for row in result]
+
+                logger.debug(f"하이브리드 컨텍스트(D): 동적 도구 {len(tools)}개 로드.")
+                return tools
+            except Exception as e:
+                logger.warning(
+                    f"하이브리드 컨텍스트(D) 도구 로드 실패: {e}", exc_info=True
+                )
+                return []
+
+        # [실행] 3가지 메모리 인출을 병렬로 실행 + 1가지 도구 목록
         results = await asyncio.gather(
             get_short_term_memory(),
             get_narrative_memory(),
             get_long_term_memory(),
+            get_available_dynamic_tools(),
         )
 
         # 3가지 결과를 하나의 컨텍스트 문자열로 조합
         final_hybrid_context = "\n\n".join(
             filter(None, results)
         )  # 비어있지 않은 결과만 합침
+        available_dynamic_tools = results[-1]
 
         if not final_hybrid_context:
             logger.debug(
@@ -173,7 +199,10 @@ class AgentNodes:
             )
             final_hybrid_context = "도움말: 첫 대화입니다."
 
-        return {"hybrid_context": final_hybrid_context}
+        return {
+            "hybrid_context": final_hybrid_context,
+            "available_dynamic_tools": available_dynamic_tools,
+        }
 
     async def route_query(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -192,6 +221,29 @@ class AgentNodes:
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
         context = state["hybrid_context"]
+
+        static_tools_desc = []
+        if "duckduckgo_search" in self.tools:
+            static_tools_desc.append(
+                "- WebSearch: 최신 뉴스, 외부 사실 검색. [RAG로 답을 못 찾을 때 사용]"
+            )
+        if "python_repl" in self.tools:
+            static_tools_desc.append(
+                "- CodeExecution: Python 코드 실행. [계산, 데이터 분석, RAG 컨텍스트 조작 시 사용]"
+            )
+
+        dynamic_tools = state.get("available_dynamic_tools", [])
+        dynamic_tools_desc = [tool.to_tool_string() for tool in dynamic_tools]
+
+        dynamic_tool_names = [tool.name for tool in dynamic_tools]
+        dynamic_tool_format_instruction = ""
+        if dynamic_tools:
+            dynamic_tool_format_instruction = (
+                f"\n[IMPORTANT] '{dynamic_tool_names}' 중 하나를 선택한 경우,"
+                "반드시 다음 JSON 포맷으로 인자(argument)를 함께 출력해야 합니다:\n"
+                '{"tool": "선택한_도구_이름", "args": {"인자1": "값1", "인자2": "값2"}}'
+            )
+
         logger.debug(
             "라우터 입력 - doc_filter=%s",
             state.get("doc_ids_filter"),
@@ -201,47 +253,126 @@ class AgentNodes:
         # 대화 기록, 질문, 이전에 실패한 도구 목록을 컨텍스트로 제공합니다.
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
             context=context,
+            static_tools="\n".join(static_tools_desc),
+            dynamic_tools="\n".join(dynamic_tools_desc),
+            dynamic_tool_format=dynamic_tool_format_instruction,
             question=question,
             failed_tools=state.get("failed_tools", []),
         )
 
         # 'fast' LLM을 호출하여 신속하게 도구를 결정합니다.
-        response = await self.llm_fast.invoke(
-            [HumanMessage(content=prompt)], config={}
-        )
+        response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
+        response_content = response.content.strip()
 
         try:
-            # LLM의 응답(예: "[powerful, CodeExecution]")을 파싱합니다.
-            # LLM의 출력이 항상 일정한 형식을 따른다고 보장할 수 없으므로,
-            # 광범위한 예외 처리를 통해 안정성을 확보합니다.
-            decision_text = (
-                response.content.strip().replace("[", "").replace("]", "")
-            )
-            llm_part, tool_part = [
-                part.strip() for part in decision_text.split(",")
-            ]
-            chosen_llm = (
-                "powerful" if "powerful" in llm_part.lower() else "fast"
-            )
+            if response_content.startswith("{"):  # json 확인
+                logger.debug("라우터 응답이 JSON(동적 도구) 포맷입니다.")
+                tool_call_data = json.loads(response_content)
+                tool_name = tool_call_data.get("tool")
+                tool_args = tool_call_data.get("args")
+
+                # 실제 사용 가능한 tool인지
+                tool_to_call = next((t for t in dynamic_tools if t.name == tool_name))
+
+                if tool_to_call and isinstance(tool_args, dict):
+                    logger.info(f"라우터 결정 -> 동적 도구: {tool_name}")
+                    return {
+                        "chosen_llm": "fast",
+                        "tool_choice": "DynamicTool",
+                        "dynamic_tool_to_call": tool_to_call,
+                        "dynamic_tool_input": tool_args,
+                        "tool_outputs": {},
+                    }
+                else:
+                    logger.warning(
+                        f"LLM이 유효하지 않은 동적 도구 ({tool_name})를 선택했습니다)"
+                    )
+                    raise ValueError("Invalid dynamic tool call")
+
+            # 기존 정적 도구 포맷인지 확인 ([LLM, TOOL])
+            logger.debug("라우터 응답이 정적 도구 포맷입니다.")
+            decision_text = response_content.replace("[", "").replace("]", "")
+            llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
+
+            chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
             tool_choice = (
                 tool_part
                 if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]
                 else "None"
             )
-        except Exception as e:
-            # 파싱 실패 시, 가장 안전한 기본값('None')으로 대체하여 예기치 않은 동작을 방지합니다.
-            logger.warning(
-                f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback."
-            )
-            chosen_llm, tool_choice = "fast", "None"
 
-        logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 도구: {tool_choice}")
-        # 결정된 LLM과 도구를 상태에 추가하여 반환합니다.
-        return {
-            "chosen_llm": chosen_llm,
-            "tool_choice": tool_choice,
-            "tool_outputs": {},  # 다음 단계를 위해 tool_outputs를 초기화합니다.
-        }
+            logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 정적 도구: {tool_choice}")
+            return {
+                "chosen_llm": chosen_llm,
+                "tool_choice": tool_choice,
+                "tool_outputs": {},
+            }
+
+        except Exception as e:
+            logger.warning(
+                f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback. 원본: {response_content}"
+            )
+            return {"chosen_llm": "fast", "tool_choice": "None", "tool_outputs": {}}
+
+    async def run_dynamic_tool(self, state: AgentState) -> Dict[str, Any]:
+        """
+        'DynamicTool'로 라우팅되었을 때,
+        `state`에 저장된 도구 정보(엔드포인트, 인자)를 기반으로
+        HTTP POST 요청을 실행하고 결과를 반환합니다.
+        """
+        logger.debug("--- [Agent Node: Dynamic Tool] ---")
+        tool_to_call: DynamicTool = state.get("dynamic_tool_to_call")
+        tool_input: Dict[str, Any] = state.get("dynamic_tool_input")
+
+        if not tool_to_call or not isinstance(tool_input, dict):
+            logger.error(
+                "DynamicTool 실행 실패: 도구 정보 또는 입력값이 AgentState에 없습니다."
+            )
+            return {
+                "tool_outputs": {
+                    "dynamic_tool_result": "Error: Tool information missing."
+                }
+            }
+
+        tool_name = tool_to_call.name
+        endpoint_url = str(tool_to_call.api_endpoint_url)
+
+        logger.info(
+            f"동적 도구 '{tool_name}' 실행 시작. 엔드포인트: {endpoint_url}, 인자: {tool_input}"
+        )
+
+        try:
+            # (향후 이 부분에 OAuth2 등 기업 내부 인증 헤더 추가 가능)
+            response = await http_client.post(endpoint_url, json=tool_input)
+            response.raise_for_status()  # 4xx, 5xx 에러 시 예외 발생
+
+            result_data = response.json()
+            # LLM이 이해할 수 있도록 JSON 문자열로 변환
+            result_str = json.dumps(result_data)
+
+            logger.info(
+                f"동적 도구 '{tool_name}' 실행 성공. 결과(일부): {result_str[:200]}..."
+            )
+            return {"tool_outputs": {"dynamic_tool_result": result_str}}
+
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                f"동적 도구 '{tool_name}' API 호출 실패 (HTTP {e.response.status_code}): {e.response.text}"
+            )
+            return {
+                "tool_outputs": {
+                    "dynamic_tool_result": f"Error: API call failed with status {e.response.status_code}. Details: {e.response.text}"
+                }
+            }
+        except Exception as e:
+            logger.error(
+                f"동적 도구 '{tool_name}' 실행 중 예기치 않은 오류: {e}", exc_info=True
+            )
+            return {
+                "tool_outputs": {
+                    "dynamic_tool_result": f"Error: An unexpected error occurred: {e}"
+                }
+            }
 
     async def run_rag_tool(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -266,9 +397,7 @@ class AgentNodes:
         # 검색 결과가 없으면, 'failed_tools' 상태에 'RAG'를 추가하고 종료합니다.
         # 이 상태는 그래프의 조건부 엣지에서 재시도(retry) 로직을 트리거하는 데 사용됩니다.
         if not retrieved:
-            logger.info(
-                "RAG 검색 결과 없음 - 질문='%s'", state["question"][:80]
-            )
+            logger.info("RAG 검색 결과 없음 - 질문='%s'", state["question"][:80])
             failed = state.get("failed_tools", [])
             failed.append("RAG")
             return {"tool_outputs": {"rag_chunks": []}, "failed_tools": failed}
@@ -301,21 +430,15 @@ class AgentNodes:
         logger.debug("--- [Agent Node: WebSearch Tool] ---")
         tool = self.tools.get("duckduckgo_search")
         if not tool:
-            logger.warning(
-                "웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음"
-            )
+            logger.warning("웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "search_result": "웹 검색 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}
             }
 
         result = await tool.arun(tool_input=state["question"])
         return {"tool_outputs": {"search_result": result}}
 
-    async def run_code_execution_tool(
-        self, state: AgentState
-    ) -> Dict[str, Any]:
+    async def run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
         """
         [노드 2-C: 코드 실행] 'CodeExecution' 도구를 실행합니다.
         - 1단계: RAG를 통해 질문과 관련된 내부 코드 컨텍스트를 검색합니다.
@@ -325,13 +448,9 @@ class AgentNodes:
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
-            logger.warning(
-                "코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음"
-            )
+            logger.warning("코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "code_result": "코드 실행 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
         # 1. RAG로 사내 코드 컨텍스트 검색 (선택적 단계)
@@ -348,15 +467,11 @@ class AgentNodes:
                 timeout=5.0,  # 컨텍스트 검색이 너무 오래 걸리지 않도록 타임아웃 설정
             )
             context_str = (
-                "\n\n---\n\n".join(
-                    [doc.page_content for doc, score in code_docs]
-                )
+                "\n\n---\n\n".join([doc.page_content for doc, score in code_docs])
                 if code_docs
                 else "No internal code context found."
             )
-            logger.info(
-                "CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs)
-            )
+            logger.info("CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs))
         except Exception as e:
             logger.warning("CodeExecution: RAG 컨텍스트 검색 실패: %s", e)
             context_str = "Error fetching code context."
@@ -372,17 +487,13 @@ class AgentNodes:
         code_to_run = (
             response.content.strip().replace("```python", "").replace("```", "")
         )
-        logger.info(
-            "코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run)
-        )
+        logger.info("코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run))
 
         # 3. 생성된 코드 실행
         # `tool.run`은 동기 함수이므로, `asyncio.to_thread`를 사용해 별도 스레드에서 실행하여
         # 이벤트 루프가 블로킹되는 것을 방지합니다.
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
-        logger.debug(
-            "코드 실행 결과 수신 - result='%s...'", str(code_result)[:120]
-        )
+        logger.debug("코드 실행 결과 수신 - result='%s...'", str(code_result)[:120])
 
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result)
@@ -414,20 +525,28 @@ class AgentNodes:
         tool_outputs = state.get("tool_outputs", {})
 
         if tool_choice == "RAG" and tool_outputs.get("rag_chunks"):
-            docs = [
-                chunk["page_content"] for chunk in tool_outputs["rag_chunks"]
-            ]
+            docs = [chunk["page_content"] for chunk in tool_outputs["rag_chunks"]]
             context_str = "[사내 RAG 정보]\n" + "\n\n---\n\n".join(docs)
         elif tool_choice == "WebSearch" and tool_outputs.get("search_result"):
             context_str = f"[웹 검색 결과]\n{tool_outputs['search_result']}"
         elif tool_choice == "CodeExecution" and tool_outputs.get("code_result"):
             code_input = state.get("code_input", "")
             code_result = tool_outputs.get("code_result", "")
-            context_str = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            context_str = (
+                f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            )
+        elif tool_choice == "DynamicTool" and tool_outputs.get("dynamic_tool_result"):
+            tool_name = state.get("dynamic_tool_to_call").name
+            tool_result = tool_outputs.get("dynamic_tool_result")
+            context_str = f"[실행된 동적 도구: {tool_name}]\n{tool_result}"
         elif tool_choice == "None":
-            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            context_str = (
+                "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            )
         else:
-            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            context_str = (
+                "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            )
 
         # 최종 프롬프트를 조립합니다.
         hybrid_context = state.get("hybrid_context", "")
@@ -488,5 +607,7 @@ class AgentNodes:
             # 가드레일 실행 중 타임아웃 또는 기타 오류 발생 시, 안전을 위해 답변을 차단하고
             # 오류 메시지를 포함한 안전한 답변으로 대체합니다.
             logger.error("Guardrail: 가드레일 실행 중 오류 발생: %s", e)
-            safe_answer = f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            safe_answer = (
+                f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            )
             return {"answer": safe_answer}

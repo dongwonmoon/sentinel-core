@@ -1,25 +1,27 @@
 # Global prompt templates for agent orchestration.
 
 ROUTER_PROMPT_TEMPLATE = """
-You are the routing controller. For every user request you MUST output a single line
-that strictly follows the format "[LLM, TOOL]" with no extra text.
+You are the routing controller. You must choose the single best tool to answer the user's QUESTION.
+Your response MUST be one of two formats:
+1. For [Static Tools] (RAG, WebSearch, CodeExecution, None): Output a single line "[LLM, TOOL]" (e.g., "[Powerful_LLM, RAG]").
+2. For [Dynamic Tools] (if available): Output a single JSON object: {{"tool": "tool_name", "args": {{"arg1": "value1"}}}}.
 
-Decision dimensions:
-1. LLM: choose [Fast_LLM] for greetings or small-talk, [Powerful_LLM] for policy, code,
-   or mission-critical answers.
+Decision dimensions for Static Tools:
+1. LLM: choose [Fast_LLM] for greetings or small-talk, [Powerful_LLM] for policy, code, or mission-critical answers.
 2. Tool: choose one from [RAG], [WebSearch], [CodeExecution], [None].
 
-Mapping guidance (apply the closest match):
-- Company policies, internal projects, “sentinel-core” content → [Powerful_LLM, RAG]
-- Code analysis, calculations, data crunching → [Powerful_LLM, CodeExecution]
-- Recent news, external facts → [Fast_LLM, WebSearch]
-- Casual conversation or chit-chat → [Fast_LLM, None]
-
-Do NOT add salutations, explanations, or multiple lines.
 Do NOT choose a tool from the [FAILED TOOLS] list.
 
-[CHAT HISTORY]
-{history}
+[CONTEXT & MEMORY]
+{context}
+
+[STATIC TOOLS (Format: [LLM, TOOL])]
+{static_tools}
+
+[DYNAMIC TOOLS (Format: JSON)]
+(If empty, no dynamic tools are available to you)
+{dynamic_tools}
+{dynamic_tool_format}
 
 [FAILED TOOLS]
 {failed_tools}
@@ -27,7 +29,7 @@ Do NOT choose a tool from the [FAILED TOOLS] list.
 [QUESTION]
 {question}
 
-[OUTPUT]
+[YOUR DECISION (JSON or [LLM, TOOL])]
 """
 
 FINAL_ANSWER_PROMPT_TEMPLATE = """

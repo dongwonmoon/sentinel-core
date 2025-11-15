@@ -7,7 +7,9 @@ API 라우터: 관리자 (Admin)
 """
 
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import sqlalchemy as sa
+from sqlalchemy import select
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,7 @@ from sqlalchemy import text
 
 from .. import dependencies, schemas
 from ...core.logger import get_logger
+from ...db import models
 
 logger = get_logger(__name__)
 
@@ -82,9 +85,7 @@ async def update_user_permissions(
     )
     old_user = result.fetchone()
     if not old_user:
-        logger.warning(
-            f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다."
-        )
+        logger.warning(f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
@@ -123,6 +124,127 @@ async def update_user_permissions(
         f"관리자 '{admin_user.username}'가 사용자 ID {user_id}의 권한을 {old_groups}에서 {new_groups}(으)로 변경했습니다."
     )
     return schemas.User(**updated_user._asdict())
+
+
+@router.post(
+    "/tools",
+    response_model=schemas.ToolResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="새로운 동적 도구 등록",
+)
+async def create_registered_tool(
+    tool_data: schemas.ToolCreate,
+    admin_user: schemas.UserInDB = Depends(dependencies.get_admin_user),
+    session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """(Admin) 에이전트가 사용할 새 동적 도구를 DB에 등록합니다."""
+    logger.info(
+        f"관리자 '{admin_user.username}'가 새 도구 '{tool_data.name}' 등록을 시도합니다."
+    )
+    try:
+        new_tool = models.RegisteredTool(**tool_data.model_dump())
+        session.add(new_tool)
+        await session.commit()
+        await session.refresh(new_tool)
+
+        await _log_admin_action(
+            session=session,
+            actor_user_id=admin_user.user_id,
+            action="create_tool",
+            target_id=f"tool_id:{new_tool.tool_id}",
+            new_value=tool_data.model_dump(),
+        )
+        return new_tool
+    except sa.exc.IntegrityError:
+        logger.warning(f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A tool with this name already exists.",
+        )
+
+
+@router.get(
+    "/tools",
+    response_model=List[schemas.ToolResponse],
+    summary="등록된 모든 동적 도구 조회",
+)
+async def get_registered_tools(
+    session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """(Admin) DB에 등록된 모든 동적 도구 목록을 조회합니다."""
+    result = await session.execute(
+        select(models.RegisteredTool).order_by(models.RegisteredTool.name)
+    )
+    return result.scalars().all()
+
+
+@router.put(
+    "/tools/{tool_id}",
+    response_model=schemas.ToolResponse,
+    summary="동적 도구 정보 수정",
+)
+async def update_registered_tool(
+    tool_id: int,
+    tool_data: schemas.ToolUpdate,
+    admin_user: schemas.UserInDB = Depends(dependencies.get_admin_user),
+    session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """(Admin) 기존에 등록된 동적 도구의 정보를 수정합니다."""
+    tool = await session.get(models.RegisteredTool, tool_id)
+    if not tool:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
+
+    old_data = schemas.ToolResponse.from_orm(tool).model_dump()
+
+    # Update
+    for key, value in tool_data.model_dump().items():
+        setattr(tool, key, value)
+
+    session.add(tool)
+    await session.commit()
+    await session.refresh(tool)
+
+    await _log_admin_action(
+        session=session,
+        actor_user_id=admin_user.user_id,
+        action="update_tool",
+        target_id=f"tool_id:{tool_id}",
+        old_value=old_data,
+        new_value=tool_data.model_dump(),
+    )
+    return tool
+
+
+@router.delete(
+    "/tools/{tool_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="동적 도구 삭제",
+)
+async def delete_registered_tool(
+    tool_id: int,
+    admin_user: schemas.UserInDB = Depends(dependencies.get_admin_user),
+    session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """(Admin) 등록된 동적 도구를 DB에서 삭제합니다."""
+    tool = await session.get(models.RegisteredTool, tool_id)
+    if not tool:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found"
+        )
+
+    await session.delete(tool)
+    await session.commit()
+
+    await _log_admin_action(
+        session=session,
+        actor_user_id=admin_user.user_id,
+        action="delete_tool",
+        target_id=f"tool_id:{tool_id}",
+        old_value={"name": tool.name},
+    )
+    return None
 
 
 @router.get(
@@ -172,9 +294,7 @@ async def get_agent_audit_logs(
     return logs
 
 
-@router.put(
-    "/documents/{doc_id}/permissions", summary="문서 권한 업데이트 (미구현)"
-)
+@router.put("/documents/{doc_id}/permissions", summary="문서 권한 업데이트 (미구현)")
 async def update_document_permissions(
     doc_id: str,
     body: schemas.UpdatePermissionsRequest,

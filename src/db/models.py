@@ -18,6 +18,7 @@ SQLAlchemy의 선언적 매핑(Declarative Mapping)을 사용하여 각 클래�
 import datetime
 from typing import List, Dict
 
+import sqlalchemy as sa
 from sqlalchemy import (
     BIGINT,
     BOOLEAN,
@@ -201,14 +202,10 @@ class DocumentChunk(Base):
     )
 
     # DocumentChunk -> Document (N:1 관계)
-    document: Mapped["Document"] = relationship(
-        "Document", back_populates="chunks"
-    )
+    document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 
     def __repr__(self) -> str:
-        return (
-            f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
-        )
+        return f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
 
 
 class ChatHistory(Base):
@@ -242,9 +239,7 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="메시지 내용"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -334,9 +329,7 @@ class AgentAuditLog(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
-        )
+        return f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
 
 
 class ChatTurnMemory(Base):
@@ -382,4 +375,68 @@ class ChatTurnMemory(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        return (
+            f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        )
+
+
+class RegisteredTool(Base):
+    """
+    '동적 도구 레지스트리' 테이블
+    관리자가 등록한 외부 API 기반 도구(플러그인) 정보를 저장합니다.
+    에이전트는 이 테이블을 동적으로 쿼리하여 사용 가능한 도구 목록을 구성합니다.
+    """
+
+    __tablename__ = "registered_tools"
+
+    tool_id: Mapped[int] = mapped_column(
+        BIGINT,
+        Identity(),
+        primary_key=True,
+        comment="도구 고유 ID (자동 증가)",
+    )
+    name: Mapped[str] = mapped_column(
+        String(100),
+        unique=True,
+        index=True,
+        nullable=False,
+        comment="도구의 고유 이름 (LLM이 호출할 이름, 예: 'jira_create_ticket')",
+    )
+    description: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="LLM이 도구의 기능을 이해하기 위한 상세 설명",
+    )
+    api_endpoint_url: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="호출할 API 엔드포인트의 전체 URL",
+    )
+    # (간소화 버전) 여기서는 OpenAPI Spec 대신 필요한 인자만 JSON으로 정의합니다.
+    # 예: {"type": "object", "properties": {"summary": {"type": "string"}, "priority": {"type": "string"}}}
+    json_schema: Mapped[Dict[str, any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        comment="도구 호출에 필요한 인자(argument)의 JSON Schema",
+    )
+    # 도구와 권한 그룹을 연결합니다.
+    permission_groups: Mapped[List[str]] = mapped_column(
+        ARRAY(Text),
+        nullable=False,
+        server_default=sa.text("ARRAY['admin']"),  # 기본값: admin만 사용 가능
+        comment="이 도구를 사용할 수 있는 권한 그룹 목록",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        BOOLEAN,
+        server_default=sa.text("true"),
+        nullable=False,
+        comment="도구 활성화 여부",
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.current_timestamp(),
+        comment="도구 등록일 (UTC)",
+    )
+
+    def __repr__(self) -> str:
+        return f"<RegisteredTool(tool_id={self.tool_id}, name='{self.name}')>"

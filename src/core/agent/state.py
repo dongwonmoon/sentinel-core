@@ -2,6 +2,19 @@
 
 from typing import TypedDict, List, Dict, Any, Literal, Optional
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.utils.pydantic import PydanticBaseModel
+
+
+class DynamicTool(PydanticBaseModel):
+    name: str
+    description: str
+    api_endpoint_url: str
+    json_schema: Dict[str, Any]
+    permission_groups: List[str]
+
+    # LangChain 에이전트가 이 객체를 도구처럼 사용할 수 있게 함
+    def to_tool_string(self) -> str:
+        return f"- {self.name}: {self.description}, args_schema: {self.json_schema}"
 
 
 class AgentState(TypedDict):
@@ -17,6 +30,11 @@ class AgentState(TypedDict):
     chat_history: List[Dict[str, str]]
     user_profile: Optional[str] = None
     hybrid_context: str
+    available_dynamic_tools: List[DynamicTool]
+    # 'route_query'가 선택한 동적 도구 정보
+    dynamic_tool_to_call: Optional[DynamicTool] = None
+    # 'route_query'가 LLM을 통해 생성한, 동적 도구에 전달할 인자(JSON)
+    dynamic_tool_input: Optional[Dict[str, Any]] = None
 
     # 중간 상태
     chosen_llm: Literal["fast", "powerful"]
