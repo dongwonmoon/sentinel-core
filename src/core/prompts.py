@@ -90,3 +90,25 @@ Respond with ONLY one word: "SAFE" or "UNSAFE".
 
 [YOUR DECISION (SAFE or UNSAFE)]
 """
+
+HYPOTHETICAL_QUESTION_PROMPT = """
+You are an expert question generator. Based on the following text chunk,
+generate ONE SINGLE hypothetical question that this chunk can answer perfectly.
+Respond ONLY with the question, and nothing else.
+
+[TEXT CHUNK]
+{chunk_text}
+
+[YOUR HYPOTHETICAL QUESTION]
+"""
+
+SUMMARY_PROMPT_TEMPLATE = """
+Summarize the following git commit messages from the last 24 hours.
+Focus on key features, bug fixes, and breaking changes.
+Respond ONLY with a concise summary in Korean.
+
+[COMMIT MESSAGES]
+{commit_messages}
+
+[SUMMARY]
+"""

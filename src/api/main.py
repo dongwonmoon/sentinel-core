@@ -15,7 +15,7 @@ from ..core.config import get_settings
 
 settings = get_settings()
 from ..core.metrics import collector, router as metrics_router
-from .endpoints import auth, chat, documents, admin
+from .endpoints import auth, chat, documents, admin, notifications, scheduler
 
 # FastAPI 앱 인스턴스 생성
 app = FastAPI(
@@ -42,6 +42,8 @@ app.include_router(chat.router)
 app.include_router(documents.router)
 app.include_router(metrics_router)
 app.include_router(admin.router)
+app.include_router(notifications.router)
+app.include_router(scheduler.router)
 
 
 class RequestTimingMiddleware(BaseHTTPMiddleware):

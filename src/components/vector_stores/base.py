@@ -15,6 +15,7 @@ class BaseVectorStore(ABC):
         self,
         documents: List[Document],
         permission_groups: List[str],
+        owner_user_id: int,
     ) -> None:
         """
         문서를 벡터 스토어에 추가하거나 업데이트(upsert)합니다.

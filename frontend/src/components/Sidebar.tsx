@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ChatSession } from "../hooks/useChatSessionsList";
 import ProfileModal from "./ProfileModal";
+import { useNotifications } from "../hooks/useNotifications";
+import NotificationList from "./NotificationList";
 
 type Props = {
   username: string;
@@ -22,6 +24,10 @@ export default function Sidebar({
   onNewChat,
 }: Props) {
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
+  
+  const { data: notifications } = useNotifications(token);
+  const unreadCount = notifications?.length || 0;
 
   return (
     <>
@@ -32,7 +38,20 @@ export default function Sidebar({
             <small>Sentinel Core</small>
           </div>
 
-          <div style={{ display: "flex", gap: "0.5rem" }}>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <button
+              className="ghost"
+              onClick={() => setShowNotificationModal(true)}
+              style={{ position: 'relative' }}
+            >
+              🔔              
+              {unreadCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: 0, right: 0, width: '10px', height: '10px',
+                  background: '#f87171', borderRadius: '50%', border: '2px solid #1e1f30'
+                }} />
+              )}
+            </button>
             <button
               className="ghost"
               onClick={() => setShowProfileModal(true)}
@@ -72,6 +91,14 @@ export default function Sidebar({
 
       {showProfileModal && (
         <ProfileModal token={token} onClose={() => setShowProfileModal(false)} />
+      )}
+      
+      {showNotificationModal && (
+        <NotificationList
+          token={token}
+          notifications={notifications || []}
+          onClose={() => setShowNotificationModal(false)}
+        />
       )}
     </>
   );

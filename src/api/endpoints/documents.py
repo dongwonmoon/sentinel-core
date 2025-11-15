@@ -82,6 +82,7 @@ async def upload_and_index_document(
             file_content=zip_content_bytes,
             file_name=zip_filename_for_task,
             permission_groups=permission_groups,
+            owner_user_id=current_user.user_id,
         )
 
         logger.info(
@@ -119,6 +120,7 @@ async def index_github_repo(
         task = tasks.process_github_repo_indexing.delay(
             repo_url=str(body.repo_url),
             permission_groups=current_user.permission_groups,
+            owner_user_id=current_user.user_id,
         )
         repo_name = str(body.repo_url).split("/")[-1].replace(".git", "")
         logger.info(

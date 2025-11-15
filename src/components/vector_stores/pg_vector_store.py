@@ -45,6 +45,7 @@ class PgVectorStore(BaseVectorStore):
         self,
         documents: List[Document],
         permission_groups: List[str],
+        owner_user_id: int,
     ) -> None:
         """
         문서를 벡터 스토어에 비동기적으로 추가하거나 업데이트(upsert)합니다.
@@ -58,9 +59,11 @@ class PgVectorStore(BaseVectorStore):
             return
 
         # 문서 내용(page_content)을 임베딩합니다.
-        embeddings = self.embedding_model.embed_documents(
-            [doc.page_content for doc in documents]
-        )
+        texts_to_embed = [
+            doc.metadata.get("embedding_source_text", doc.page_content)
+            for doc in documents
+        ]
+        embeddings = self.embedding_model.embed_documents(texts_to_embed)
         doc_ids_to_clear = list(set(doc.metadata.get("doc_id") for doc in documents))
 
         async with self.AsyncSessionLocal() as session:
@@ -77,18 +80,21 @@ class PgVectorStore(BaseVectorStore):
                                 "source_type": doc.metadata.get("source_type"),
                                 "permission_groups": permission_groups,
                                 "metadata": json.dumps(doc.metadata),
+                                "owner_user_id": owner_user_id,
                             }
 
                     if doc_infos:
                         stmt_docs_upsert = text(
                             """
-                            INSERT INTO documents (doc_id, source_type, permission_groups, metadata)
-                            VALUES (:doc_id, :source_type, :permission_groups, :metadata) 
+                            INSERT INTO documents (doc_id, source_type, permission_groups, metadata, owner_user_id)
+                            VALUES (:doc_id, :source_type, :permission_groups, :metadata, :owner_user_id) 
                             ON CONFLICT (doc_id) DO UPDATE SET
                                 source_type = EXCLUDED.source_type,
                                 permission_groups = EXCLUDED.permission_groups,
-                                metadata = EXCLUDED.metadata
-                        """
+                                metadata = EXCLUDED.metadata,
+                                owner_user_id = EXCLUDED.owner_user_id,
+                                last_verified_at = CURRENT_TIMESTAMP
+                            """
                         )
                         await session.execute(
                             stmt_docs_upsert, list(doc_infos.values())
@@ -112,15 +118,16 @@ class PgVectorStore(BaseVectorStore):
                                 "chunk_text": doc.page_content,
                                 "embedding": str(embeddings[i]),
                                 "metadata": json.dumps(doc.metadata),
+                                "embedding_source_text": texts_to_embed[i],
                             }
                         )
 
                     if chunk_data_list:
                         stmt_chunks_insert = text(
                             """
-                            INSERT INTO document_chunks (doc_id, chunk_text, embedding, metadata)
-                            VALUES (:doc_id, :chunk_text, :embedding, :metadata)
-                        """
+                            INSERT INTO document_chunks (doc_id, chunk_text, embedding, metadata, embedding_source_text)
+                            VALUES (:doc_id, :chunk_text, :embedding, :metadata, :embedding_source_text)
+                            """
                         )
                         await session.execute(stmt_chunks_insert, chunk_data_list)
 

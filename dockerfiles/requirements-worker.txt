@@ -27,3 +27,4 @@ python-magic
 tree-sitter
 tree-sitter-languages
 GitPython
+croniter

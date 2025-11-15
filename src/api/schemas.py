@@ -144,3 +144,16 @@ class DocumentResponse(BaseModel):
 
     filter_key: str
     display_name: str
+
+
+# --- 4. 스케줄러 (Scheduler) 관련 스키마 ---
+class TaskCreate(BaseModel):
+    task_name: str  # e.g., "run_scheduled_github_summary"
+    schedule: str  # e.g., "0 9 * * *"
+    task_kwargs: dict  # e.g., {"repo_url": "https://github.com..."}
+
+
+class TaskResponse(TaskCreate):
+    task_id: int
+    user_id: int
+    is_active: bool

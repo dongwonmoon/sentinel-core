@@ -57,6 +57,7 @@ services:
     depends_on:
       - db
       - redis
+      - ollama
     environment:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
@@ -67,6 +68,28 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
+    restart: always
+
+  beat:
+    build:
+      context: dockerfiles/.
+      dockerfile: Dockerfile.worker
+    container_name: sentinel_beat
+    command: celery -A src.worker.celery_app:celery_app beat --loglevel=debug
+    volumes:
+      - .:/app
+      - ./config.yml:/app/config.yml:ro
+    depends_on:
+      - db
+      - redis
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - REDIS_HOST=redis
+      - OLLAMA_BASE_URL=http://ollama:11434
     restart: always
 
   ui:
