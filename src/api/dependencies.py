@@ -14,6 +14,9 @@ FastAPI 의존성 주입(Dependency Injection) 시스템을 위한 "제공자(Pr
 
 from functools import lru_cache
 from typing import AsyncGenerator
+import time
+import json
+import redis.asyncio as aioredis
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -60,9 +63,7 @@ def get_agent() -> Agent:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info(
-        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
-    )
+    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
     start_time = time.time()
 
     settings = get_settings()
@@ -96,10 +97,40 @@ def get_agent() -> Agent:
     )
 
     end_time = time.time()
-    logger.info(
-        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
-    )
+    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
     return agent
+
+
+@lru_cache
+def get_redis_pool() -> aioredis.ConnectionPool:
+    """
+    세션 저장을 위한 Redis 커넥션 풀을 생성하고 캐시합니다.
+    Celery(0, 1)와 다른 DB(2)를 사용합니다.
+    """
+    logger.info("세션 캐시용 Redis 커넥션 풀을 생성합니다.")
+    settings = get_settings()
+    return aioredis.ConnectionPool.from_url(
+        f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/2",
+        encoding="utf-8",
+        decode_responses=True,
+    )
+
+
+async def get_redis_client(
+    pool: aioredis.ConnectionPool = Depends(get_redis_pool),
+) -> AsyncGenerator[aioredis.Redis, None]:
+    """
+    API 요청마다 Redis 풀에서 클라이언트를 가져오는 의존성입니다.
+    """
+    logger.debug("Redis 풀에서 클라이언트를 가져옵니다.")
+    async with aioredis.Redis(connection_pool=pool) as redis:
+        try:
+            yield redis
+        except Exception as e:
+            logger.error(f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True)
+            raise
+        finally:
+            logger.debug("Redis 클라이언트를 풀에 반환합니다.")
 
 
 # --- 요청 단위 의존성 (API 요청마다 생성 및 소멸) ---
@@ -124,9 +155,7 @@ async def get_db_session(
     """
     vector_store = agent.vector_store
     if not isinstance(vector_store, PgVectorStore):
-        logger.error(
-            "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."
-        )
+        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
         raise HTTPException(
             status_code=501,
             detail="Database session is only available when using PgVectorStore.",
@@ -262,9 +291,7 @@ async def enforce_chat_rate_limit(
     """채팅 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
         # `rate_limiter`는 사용자 ID를 기준으로 'chat' 유형의 요청 횟수를 확인합니다.
-        await rate_limiter.assert_within_limit(
-            "chat", str(current_user.user_id)
-        )
+        await rate_limiter.assert_within_limit("chat", str(current_user.user_id))
         logger.debug(f"사용자 '{current_user.username}'의 채팅 속도 제한 통과.")
     except ValueError as exc:
         logger.warning(
@@ -281,12 +308,8 @@ async def enforce_document_rate_limit(
 ) -> None:
     """문서 관련 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
-        await rate_limiter.assert_within_limit(
-            "documents", str(current_user.user_id)
-        )
-        logger.debug(
-            f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과."
-        )
+        await rate_limiter.assert_within_limit("documents", str(current_user.user_id))
+        logger.debug(f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과.")
     except ValueError as exc:
         logger.warning(
             f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}"

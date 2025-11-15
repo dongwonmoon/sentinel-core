@@ -105,14 +105,22 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., description="사용자의 질문")
     top_k: int = Field(default=3, description="RAG 검색 시 반환할 최종 청크 수")
-    doc_ids_filter: Optional[List[str]] = Field(
-        default=None, description="RAG 검색을 제한할 문서 ID 리스트"
-    )
-    chat_history: Optional[List[ChatMessageBase]] = Field(
-        default=None, description="이전 대화 기록"
-    )
+    # doc_ids_filter: Optional[List[str]] = Field(
+    #     default=None, description="RAG 검색을 제한할 문서 ID 리스트"
+    # )
+    # chat_history: Optional[List[ChatMessageBase]] = Field(
+    #     default=None, description="이전 대화 기록"
+    # )
     session_id: Optional[str] = Field(
         default=None, description="현재 대화 세션을 식별하는 ID"
+    )
+
+
+class SessionContextUpdate(BaseModel):
+    """PUT /chat/sessions/{session_id}/context 요청 스키마"""
+
+    doc_ids_filter: Optional[List[str]] = Field(
+        default=None, description="RAG 검색을 제한할 문서 ID 리스트"
     )
 
 

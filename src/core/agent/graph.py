@@ -88,6 +88,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
     logger.debug(
         "그래프에 노드를 추가합니다: route_query, run_rag_tool, run_web_search_tool, run_code_execution_tool, generate_final_answer, output_guardrail"
     )
+    workflow.add_node("build_hybrid_context", nodes.build_hybrid_context)
     workflow.add_node("route_query", nodes.route_query)
     workflow.add_node("run_rag_tool", nodes.run_rag_tool)
     workflow.add_node("run_web_search_tool", nodes.run_web_search_tool)
@@ -98,10 +99,11 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
     # --- 2. 엣지(Edge) 연결 ---
     # 노드 간의 실행 흐름(데이터 흐름)을 정의합니다.
 
-    # 그래프의 진입점(Entry Point)을 'route_query' 노드로 설정합니다.
-    # 모든 요청은 이 노드에서 시작됩니다.
-    workflow.set_entry_point("route_query")
-    logger.debug("그래프 진입점을 'route_query'로 설정했습니다.")
+    # 그래프의 진입점(Entry Point)을 'build_hybrid_context' 노드로 설정합니다.
+    workflow.set_entry_point("build_hybrid_context")
+    logger.debug("그래프 진입점을 'build_hybrid_context'로 설정했습니다.")
+
+    workflow.add_edge("build_hybrid_context", "route_query")
 
     # 'route_query' 노드 이후의 조건부 분기 설정
     # `_decide_branch` 함수의 반환값에 따라 다음에 실행될 노드가 결정됩니다.
@@ -144,9 +146,7 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
 
     # 가드레일 통과 후, 그래프 실행을 종료합니다. (END는 LangGraph의 특별한 노드 이름)
     workflow.add_edge("output_guardrail", END)
-    logger.debug(
-        "'output_guardrail'에서 그래프 종료(END)로의 엣지를 추가했습니다."
-    )
+    logger.debug("'output_guardrail'에서 그래프 종료(END)로의 엣지를 추가했습니다.")
 
     # --- 3. 그래프 컴파일 ---
     # 위에서 정의된 노드와 엣지 구성을 바탕으로 실행 가능한 객체를 생성하여 반환합니다.

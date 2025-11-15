@@ -8,8 +8,10 @@ API 라우터: 채팅 (Chat)
 -   **/history/{session_id}**: 특정 채팅 세션의 대화 기록을 조회합니다.
 -   **/profile**: 사용자의 프로필 정보를 조회하고 업데이트합니다.
 """
+import json
+import redis.asyncio as aioredis
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +33,8 @@ async def query_agent(
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
     _: None = Depends(dependencies.enforce_chat_rate_limit),
     agent: Agent = Depends(dependencies.get_agent),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+    redis: aioredis.Redis = Depends(dependencies.get_redis_client),
 ) -> StreamingResponse:
     """
     에이전트에게 질문(Query)을 보내고, 답변을 실시간 스트리밍 방식으로 반환합니다.
@@ -59,23 +63,27 @@ async def query_agent(
 
     # 에이전트(LangGraph)의 입력으로 사용될 딕셔너리를 구성합니다.
     # 사용자의 권한 그룹, 프로필 정보 등을 포함하여 개인화된 답변을 생성하는 데 사용됩니다.
-    inputs = {
-        "question": body.query,
-        "permission_groups": current_user.permission_groups,
-        "top_k": body.top_k,
-        "doc_ids_filter": body.doc_ids_filter,
-        "chat_history": (
-            [msg.dict() for msg in body.chat_history]
-            if body.chat_history
-            else []
-        ),
-        "user_id": str(current_user.user_id),
-        "session_id": str(body.session_id),
-        "user_profile": current_user.profile_text or "",
-    }
-    logger.debug(
-        f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료."
-    )
+    try:
+        inputs = await chat_service.build_stateful_agent_inputs(
+            redis=redis,
+            db_session=db_session,
+            user_id=current_user.user_id,
+            session_id=body.session_id,
+            query=body.query,
+            top_k=body.top_k,
+            permission_groups=current_user.permission_groups,
+            user_profile=current_user.profile_text or "",
+        )
+    except Exception as e:
+        logger.error(
+            f"세션 '{body.session_id}'의 상태 저장 컨텍스트 빌드 실패: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to build agent context.",
+        )
+    logger.debug(f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료.")
 
     # `chat_service.stream_agent_response`는 비동기 제너레이터(Async Generator)를 반환합니다.
     # FastAPI는 이 제너레이터로부터 생성되는 데이터 조각들을 클라이언트로 스트리밍합니다.
@@ -88,6 +96,52 @@ async def query_agent(
     )
 
     return StreamingResponse(response_generator, media_type="text/event-stream")
+
+
+@router.put(
+    "/sessions/{session_id}/context",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def update_session_context(
+    session_id: str,
+    body: schemas.SessionContextUpdate,
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    redis: aioredis.Redis = Depends(dependencies.get_redis_client),
+):
+    """
+    채팅 세션의 상태(예: RAG 문서 필터)를 서버(Redis)에 저장(Stateful)합니다.
+    프론트엔드가 RAG 필터를 변경할 때 이 API를 호출합니다.
+    """
+    logger.info(
+        f"세션 '{session_id}' (사용자: '{current_user.username}')의 컨텍스트 업데이트 시도."
+    )
+    session_key = f"session_context:{session_id}"
+
+    try:
+        # 기존 컨텍스트를 읽어옵니다. (없으면 빈 객체)
+        existing_context_raw = await redis.get(session_key)
+        if existing_context_raw:
+            context = json.loads(existing_context_raw)
+        else:
+            context = {}
+
+        # 새 컨텍스트(doc_ids_filter)로 덮어씁니다.
+        context["doc_ids_filter"] = body.doc_ids_filter
+
+        # Redis에 (24시간 만료) 저장합니다.
+        await redis.set(session_key, json.dumps(context), ex=86400)  # 24h expiry
+
+        logger.debug(f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}")
+        return None  # 204 응답
+
+    except Exception as e:
+        logger.error(
+            f"세션 '{session_id}'의 컨텍스트 업데이트 실패: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update session context.",
+        )
 
 
 @router.get(
@@ -109,9 +163,7 @@ async def get_chat_sessions(
     Returns:
         schemas.ChatSessionListResponse: 채팅 세션 목록을 포함하는 응답.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다.")
     sessions = await chat_service.fetch_user_sessions(
         db_session=session, user_id=current_user.user_id
     )
@@ -175,15 +227,11 @@ async def get_user_profile(
     Returns:
         schemas.UserProfileResponse: 사용자의 프로필 텍스트를 포함하는 응답.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다.")
     profile_text = await chat_service.fetch_user_profile(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다.")
     return schemas.UserProfileResponse(profile_text=profile_text)
 
 
@@ -205,9 +253,7 @@ async def update_user_profile(
         current_user: 인증된 사용자 정보.
         session: DB 작업을 위한 비동기 세션.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다.")
     await chat_service.upsert_user_profile(
         db_session=session,
         user_id=current_user.user_id,

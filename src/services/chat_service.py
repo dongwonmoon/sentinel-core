@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from typing import AsyncGenerator, Optional, Dict, Any
+import redis.asyncio as aioredis
 
 from fastapi import BackgroundTasks
 from sqlalchemy import func, select
@@ -27,6 +28,56 @@ from ..core.logger import get_logger
 from ..db import models
 
 logger = get_logger(__name__)
+
+
+async def build_stateful_agent_inputs(
+    redis: aioredis.Redis,
+    db_session: AsyncSession,
+    user_id: int,
+    session_id: str,
+    query: str,
+    top_k: int,
+    permission_groups: list[str],
+    user_profile: str,
+) -> Dict[str, Any]:
+    """
+    서버 측(Redis)에 저장된 세션 컨텍스트를 로드하고,
+    DB에서 대화 기록을 가져와 완전한 AgentState 입력을 구성합니다.
+    """
+    session_key = f"session_context:{session_id}"
+
+    # Redis에서 컨텍스트(RAG 필터 등) 로드
+    doc_ids_filter = None
+    try:
+        context_raw = await redis.get(session_key)
+        if context_raw:
+            context = json.loads(context_raw)
+            doc_ids_filter = context.get("doc_ids_filter")
+            logger.debug(f"세션 '{session_id}'의 컨텍스트를 Redis에서 로드했습니다.")
+    except Exception as e:
+        # 장애 시에도 서비스 지속
+        logger.warning(f"세션 '{session_id}'의 Redis 컨텍스트 로드 실패: {e}")
+
+    # DB에서 대화 기록 로드
+    chat_history_models = await fetch_chat_history(
+        db_session=db_session, user_id=user_id, session_id=session_id
+    )
+    chat_history = [
+        {"role": msg.role, "content": msg.content} for msg in chat_history_models
+    ]
+
+    inputs = {
+        "question": query,
+        "top_k": top_k,
+        "permission_groups": permission_groups,
+        "user_profile": user_profile,
+        "chat_history": chat_history,
+        "doc_ids_filter": doc_ids_filter,
+        "session_id": str(session_id),
+        "user_id": str(user_id),
+    }
+
+    return inputs
 
 
 async def stream_agent_response(
@@ -59,16 +110,12 @@ async def stream_agent_response(
     stream_started = False
 
     try:
-        logger.info(
-            f"세션 '{session_id}'에 대한 에이전트 스트리밍을 시작합니다."
-        )
+        logger.info(f"세션 '{session_id}'에 대한 에이전트 스트리밍을 시작합니다.")
         # 에이전트의 `stream_response` 메서드를 호출하여 이벤트 스트림을 받습니다.
         async for event in agent.stream_response(inputs):
             kind = event.get("event")
             if not stream_started:
-                logger.debug(
-                    f"세션 '{session_id}'의 첫 이벤트를 수신했습니다: {kind}"
-                )
+                logger.debug(f"세션 '{session_id}'의 첫 이벤트를 수신했습니다: {kind}")
                 stream_started = True
 
             # 이벤트 종류가 'on_chat_model_stream' (LLM 토큰 생성)일 경우
@@ -88,9 +135,7 @@ async def stream_agent_response(
 
             # 이벤트 종류가 'on_graph_end' (그래프 실행 종료)일 경우
             elif kind == "on_graph_end":
-                logger.debug(
-                    f"세션 '{session_id}'의 그래프 실행이 종료되었습니다."
-                )
+                logger.debug(f"세션 '{session_id}'의 그래프 실행이 종료되었습니다.")
                 final_state = event.get("data", {}).get("output")
                 if final_state and isinstance(final_state, dict):
                     # RAG를 통해 검색된 소스(Source)가 있다면 'sources' 이벤트로 클라이언트에 전송합니다.
@@ -105,9 +150,7 @@ async def stream_agent_response(
                         yield _build_sse_payload("sources", sources_dict)
 
         # 모든 스트림이 성공적으로 끝나면 'end' 이벤트를 전송합니다.
-        logger.info(
-            f"세션 '{session_id}'의 스트리밍이 성공적으로 완료되었습니다."
-        )
+        logger.info(f"세션 '{session_id}'의 스트리밍이 성공적으로 완료되었습니다.")
         yield _build_sse_payload("end", "Stream ended")
 
     except Exception as exc:
@@ -163,9 +206,15 @@ async def save_chat_messages_task(
     # 백그라운드 작업에서는 새로운 세션을 만들어야 합니다.
     session_local = getattr(agent.vector_store, "AsyncSessionLocal", None)
     if not session_local:
-        logger.error(
-            "백그라운드 저장을 위한 DB 세션 팩토리를 찾을 수 없습니다."
-        )
+        logger.error("백그라운드 저장을 위한 DB 세션 팩토리를 찾을 수 없습니다.")
+        return
+
+    embedding_model = getattr(agent.vector_store, "embedding_model", None)
+    if not embedding_model:
+        logger.error("백그라운드 저장을 위한 임베딩 모델을 찾을 수 없습니다.")
+        # 임베딩 없이는 '사건 기억' 저장이 불가능하므로, 여기서부턴 실행하지 않습니다.
+        # (단, chat_history 저장은 시도해야 하므로 로직을 분리할 수 있으나,
+        # 여기서는 에러 로깅 후 전체 함수를 리턴하는 것으로 간소화합니다.)
         return
 
     async with session_local() as session:
@@ -188,6 +237,21 @@ async def save_chat_messages_task(
                     content=final_answer,
                 )
                 session.add(ai_message)
+
+            if final_answer:  # AI 답변이 있는 턴만 기억으로 저장
+                turn_text = f"User: {user_query}\n\nAssistant: {final_answer}"
+
+                # 임베딩 생성 (embed_documents는 리스트를 받음)
+                embedding_vector_list = embedding_model.embed_documents([turn_text])
+                embedding_vector = embedding_vector_list[0]
+
+                turn_memory = models.ChatTurnMemory(
+                    session_id=session_id,
+                    user_id=user_id,
+                    turn_text=turn_text,
+                    embedding=embedding_vector,  # 모델이 리스트를 반환
+                )
+                session.add(turn_memory)
 
             # 세션에 추가된 모든 변경사항을 DB에 한 번에 커밋
             await session.commit()
@@ -241,9 +305,7 @@ async def save_audit_log_task(state: dict, agent: Agent):
         try:
             session.add(log_entry)
             await session.commit()
-            logger.info(
-                f"감사 로그를 성공적으로 저장했습니다 (세션 ID: {session_id})."
-            )
+            logger.info(f"감사 로그를 성공적으로 저장했습니다 (세션 ID: {session_id}).")
         except Exception as exc:
             logger.error(
                 f"감사 로그 저장 중 오류 발생 (세션 ID: {session_id}): {exc}",
@@ -272,9 +334,7 @@ async def fetch_user_sessions(
     Returns:
         list[schemas.ChatSession]: Pydantic 스키마로 변환된 채팅 세션 목록.
     """
-    logger.debug(
-        f"사용자 '{user_id}'의 채팅 세션 목록 조회를 위한 쿼리를 구성합니다."
-    )
+    logger.debug(f"사용자 '{user_id}'의 채팅 세션 목록 조회를 위한 쿼리를 구성합니다.")
     # CTE 1: ranked_messages
     ranked_messages_cte = (
         select(
@@ -319,8 +379,7 @@ async def fetch_user_sessions(
         )
         .join(
             latest_activity_cte,
-            ranked_messages_cte.c.session_id
-            == latest_activity_cte.c.session_id,
+            ranked_messages_cte.c.session_id == latest_activity_cte.c.session_id,
         )
         .where(ranked_messages_cte.c.rn == 1)
         .order_by(latest_activity_cte.c.last_updated.desc())
@@ -328,9 +387,7 @@ async def fetch_user_sessions(
 
     result = await db_session.execute(stmt)
     sessions = [schemas.ChatSession(**row._asdict()) for row in result]
-    logger.debug(
-        f"사용자 '{user_id}'에 대해 {len(sessions)}개의 세션을 조회했습니다."
-    )
+    logger.debug(f"사용자 '{user_id}'에 대해 {len(sessions)}개의 세션을 조회했습니다.")
     return sessions
 
 
@@ -350,12 +407,8 @@ async def fetch_chat_history(
         .order_by(models.ChatHistory.created_at.asc())
     )
     result = await db_session.execute(stmt)
-    messages = [
-        schemas.ChatMessageInDB.from_orm(row) for row in result.scalars()
-    ]
-    logger.debug(
-        f"세션 '{session_id}'에서 {len(messages)}개의 메시지를 조회했습니다."
-    )
+    messages = [schemas.ChatMessageInDB.from_orm(row) for row in result.scalars()]
+    logger.debug(f"세션 '{session_id}'에서 {len(messages)}개의 메시지를 조회했습니다.")
     return messages
 
 

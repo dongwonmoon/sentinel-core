@@ -8,6 +8,7 @@ Agent의 각 노드(Node)에 대한 실제 실행 로직을 정의합니다.
 
 import asyncio
 from typing import Any, Dict
+from sqlalchemy import select, text
 
 from langchain_core.messages import HumanMessage
 
@@ -43,6 +44,127 @@ class AgentNodes:
         self.reranker = reranker
         self.tools = tools
 
+        self.AsyncSessionLocal = getattr(vector_store, "AsyncSessionLocal", None)
+        if not self.AsyncSessionLocal:
+            logger.warning("AgentNodes: DB 세션 팩토리를 찾을 수 없습니다.")
+
+    async def build_hybrid_context(self, state: AgentState) -> Dict[str, Any]:
+        """
+        LangGraph의 새 진입점(Entrypoint).
+        3가지 유형의 메모리를 병렬로 인출하여 하이브리드 컨텍스트를 구축합니다.
+        A. 최근 대화 (Short-Term)
+        B. 대화 요약 (Narrative)
+        C. '역사적 RAG' (Long-Term)
+        """
+        logger.debug("--- [Agent Node: Build Hybrid Context] ---")
+
+        async def get_short_term_memory() -> str:
+            """A. 최근 3개의 대화만 원본 그대로 가져옵니다."""
+            try:
+                # AgentState에 있는 전체 히스토리 사용
+                recent_turns = state.get("chat_history", [])[-3:]
+                if not recent_turns:
+                    return ""
+
+                history_str = "\n".join(
+                    [f"{msg['role']}: {msg['content']}" for msg in recent_turns]
+                )
+                logger.debug(
+                    f"하이브리드 컨텍스트(A): 최근 대화 {len(recent_turns)}개 로드."
+                )
+                return f"[최근 대화]\n{history_str}"
+            except Exception as e:
+                logger.warning(f"하이브리드 컨텍스트(A) 로드 실패: {e}")
+                return ""
+
+        async def get_narrative_memory() -> str:
+            """B. 전체 대화의 맥락을 요약합니다."""
+            try:
+                full_history = state.get("chat_history", [])
+                if len(full_history) < 5:  # 대화가 짧으면 요약 불필요
+                    return ""
+
+                history_str = "\n".join(
+                    [f"{msg['role']}: {msg['content']}" for msg in full_history]
+                )
+                prompt = prompts.MEMORY_SUMMARY_PROMPT_TEMPLATE.format(
+                    history=history_str, question=state["question"]
+                )
+                response = await self.llm_fast.invoke(
+                    [HumanMessage(content=prompt)], config={}
+                )
+                summary = response.content.strip()
+                logger.debug(f"하이브리드 컨텍스트(B): 대화 요약 생성 완료.")
+                return f"[대화 요약]\n{summary}"
+            except Exception as e:
+                logger.warning(f"하이브리드 컨텍스트(B) 요약 실패: {e}")
+                return ""
+
+        async def get_long_term_memory() -> str:
+            """C. 현재 질문과 관련성이 높은 '과거의 특정 대화'를 RAG로 인출합니다."""
+            if not self.AsyncSessionLocal:
+                return ""  # DB 세션 없이는 실행 불가
+            try:
+                # 1. 현재 질문 임베딩
+                query_embedding = self.vector_store.embedding_model.embed_query(
+                    state["question"]
+                )
+                query_vec_str = str(query_embedding)
+
+                # 2. 'chat_turn_memory' 테이블 검색
+                # LIMIT 하드 코딩. 일단 보류
+                sql_query = """
+                    SELECT turn_text, embedding <-> :query_embedding AS distance
+                    FROM chat_turn_memory
+                    WHERE session_id = :session_id AND user_id = :user_id
+                    ORDER BY distance
+                    LIMIT 2
+                """
+                async with self.AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        text(sql_query),
+                        {
+                            "query_embedding": query_vec_str,
+                            "session_id": state["session_id"],
+                            "user_id": int(state["user_id"]),
+                        },
+                    )
+                    # 임계값 하드 코딩. 일단 보류
+                    relevant_turns = [
+                        row.turn_text for row in result if row.distance < 0.8
+                    ]  # (임계값 0.8)
+
+                if not relevant_turns:
+                    logger.debug("하이브리드 컨텍스트(C): 관련 '사건 기억' 없음.")
+                    return ""
+
+                logger.debug(
+                    f"하이브리드 컨텍스트(C): 관련 '사건 기억' {len(relevant_turns)}개 인출."
+                )
+                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(relevant_turns)
+
+            except Exception as e:
+                logger.warning(f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True)
+                return ""
+
+        # [실행] 3가지 메모리 인출을 병렬로 실행
+        results = await asyncio.gather(
+            get_short_term_memory(), get_narrative_memory(), get_long_term_memory()
+        )
+
+        # 3가지 결과를 하나의 컨텍스트 문자열로 조합
+        final_hybrid_context = "\n\n".join(
+            filter(None, results)
+        )  # 비어있지 않은 결과만 합침
+
+        if not final_hybrid_context:
+            logger.debug(
+                "하이브리드 컨텍스트: 생성된 컨텍스트가 없습니다. (첫 대화일 수 있음)"
+            )
+            final_hybrid_context = "도움말: 첫 대화입니다."
+
+        return {"hybrid_context": final_hybrid_context}
+
     async def route_query(self, state: AgentState) -> Dict[str, Any]:
         """
         [노드 1: 라우터] LLM을 이용해 사용자의 질문을 분석하고, 가장 적절한 도구를 결정합니다.
@@ -59,41 +181,30 @@ class AgentNodes:
         """
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
-        history = convert_history_dicts_to_messages(
-            state.get("chat_history", [])
-        )
+        context = state["hybrid_context"]
         logger.debug(
-            "라우터 입력 - history=%d개, doc_filter=%s",
-            len(history),
+            "라우터 입력 - doc_filter=%s",
             state.get("doc_ids_filter"),
         )
 
         # 라우팅 결정을 위한 프롬프트를 생성합니다.
         # 대화 기록, 질문, 이전에 실패한 도구 목록을 컨텍스트로 제공합니다.
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
-            history="\n".join([f"{m.type}: {m.content}" for m in history]),
+            context=context,
             question=question,
             failed_tools=state.get("failed_tools", []),
         )
 
         # 'fast' LLM을 호출하여 신속하게 도구를 결정합니다.
-        response = await self.llm_fast.invoke(
-            [HumanMessage(content=prompt)], config={}
-        )
+        response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
 
         try:
             # LLM의 응답(예: "[powerful, CodeExecution]")을 파싱합니다.
             # LLM의 출력이 항상 일정한 형식을 따른다고 보장할 수 없으므로,
             # 광범위한 예외 처리를 통해 안정성을 확보합니다.
-            decision_text = (
-                response.content.strip().replace("[", "").replace("]", "")
-            )
-            llm_part, tool_part = [
-                part.strip() for part in decision_text.split(",")
-            ]
-            chosen_llm = (
-                "powerful" if "powerful" in llm_part.lower() else "fast"
-            )
+            decision_text = response.content.strip().replace("[", "").replace("]", "")
+            llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
+            chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
             tool_choice = (
                 tool_part
                 if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]
@@ -101,9 +212,7 @@ class AgentNodes:
             )
         except Exception as e:
             # 파싱 실패 시, 가장 안전한 기본값('None')으로 대체하여 예기치 않은 동작을 방지합니다.
-            logger.warning(
-                f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback."
-            )
+            logger.warning(f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback.")
             chosen_llm, tool_choice = "fast", "None"
 
         logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 도구: {tool_choice}")
@@ -137,9 +246,7 @@ class AgentNodes:
         # 검색 결과가 없으면, 'failed_tools' 상태에 'RAG'를 추가하고 종료합니다.
         # 이 상태는 그래프의 조건부 엣지에서 재시도(retry) 로직을 트리거하는 데 사용됩니다.
         if not retrieved:
-            logger.info(
-                "RAG 검색 결과 없음 - 질문='%s'", state["question"][:80]
-            )
+            logger.info("RAG 검색 결과 없음 - 질문='%s'", state["question"][:80])
             failed = state.get("failed_tools", [])
             failed.append("RAG")
             return {"tool_outputs": {"rag_chunks": []}, "failed_tools": failed}
@@ -172,21 +279,15 @@ class AgentNodes:
         logger.debug("--- [Agent Node: WebSearch Tool] ---")
         tool = self.tools.get("duckduckgo_search")
         if not tool:
-            logger.warning(
-                "웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음"
-            )
+            logger.warning("웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "search_result": "웹 검색 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}
             }
 
         result = await tool.arun(tool_input=state["question"])
         return {"tool_outputs": {"search_result": result}}
 
-    async def run_code_execution_tool(
-        self, state: AgentState
-    ) -> Dict[str, Any]:
+    async def run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
         """
         [노드 2-C: 코드 실행] 'CodeExecution' 도구를 실행합니다.
         - 1단계: RAG를 통해 질문과 관련된 내부 코드 컨텍스트를 검색합니다.
@@ -196,13 +297,9 @@ class AgentNodes:
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
-            logger.warning(
-                "코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음"
-            )
+            logger.warning("코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "code_result": "코드 실행 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
         # 1. RAG로 사내 코드 컨텍스트 검색 (선택적 단계)
@@ -219,15 +316,11 @@ class AgentNodes:
                 timeout=5.0,  # 컨텍스트 검색이 너무 오래 걸리지 않도록 타임아웃 설정
             )
             context_str = (
-                "\n\n---\n\n".join(
-                    [doc.page_content for doc, score in code_docs]
-                )
+                "\n\n---\n\n".join([doc.page_content for doc, score in code_docs])
                 if code_docs
                 else "No internal code context found."
             )
-            logger.info(
-                "CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs)
-            )
+            logger.info("CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs))
         except Exception as e:
             logger.warning("CodeExecution: RAG 컨텍스트 검색 실패: %s", e)
             context_str = "Error fetching code context."
@@ -243,17 +336,13 @@ class AgentNodes:
         code_to_run = (
             response.content.strip().replace("```python", "").replace("```", "")
         )
-        logger.info(
-            "코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run)
-        )
+        logger.info("코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run))
 
         # 3. 생성된 코드 실행
         # `tool.run`은 동기 함수이므로, `asyncio.to_thread`를 사용해 별도 스레드에서 실행하여
         # 이벤트 루프가 블로킹되는 것을 방지합니다.
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
-        logger.debug(
-            "코드 실행 결과 수신 - result='%s...'", str(code_result)[:120]
-        )
+        logger.debug("코드 실행 결과 수신 - result='%s...'", str(code_result)[:120])
 
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result)
@@ -285,32 +374,36 @@ class AgentNodes:
         tool_outputs = state.get("tool_outputs", {})
 
         if tool_choice == "RAG" and tool_outputs.get("rag_chunks"):
-            docs = [
-                chunk["page_content"] for chunk in tool_outputs["rag_chunks"]
-            ]
+            docs = [chunk["page_content"] for chunk in tool_outputs["rag_chunks"]]
             context_str = "[사내 RAG 정보]\n" + "\n\n---\n\n".join(docs)
         elif tool_choice == "WebSearch" and tool_outputs.get("search_result"):
             context_str = f"[웹 검색 결과]\n{tool_outputs['search_result']}"
         elif tool_choice == "CodeExecution" and tool_outputs.get("code_result"):
             code_input = state.get("code_input", "")
             code_result = tool_outputs.get("code_result", "")
-            context_str = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            context_str = (
+                f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            )
         elif tool_choice == "None":
-            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            context_str = (
+                "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            )
         else:
-            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            context_str = (
+                "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            )
 
         # 최종 프롬프트를 조립합니다.
-        history = convert_history_dicts_to_messages(
-            state.get("chat_history", [])
-        )
+        hybrid_context = state.get("hybrid_context", "")
+
         prompt = prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
-            context=context_str,
+            hybrid_context=hybrid_context,
+            tool_context=context_str,
             question=state["question"],
             permission_groups=state["permission_groups"],
             user_profile=state.get("user_profile", "Not specified"),
         )
-        messages = history + [HumanMessage(content=prompt)]
+        messages = [HumanMessage(content=prompt)]
 
         # LLM 스트리밍 호출을 통해 최종 답변을 생성합니다.
         # 이 스트림은 서비스 계층에서 클라이언트로 직접 전달됩니다.
@@ -359,5 +452,7 @@ class AgentNodes:
             # 가드레일 실행 중 타임아웃 또는 기타 오류 발생 시, 안전을 위해 답변을 차단하고
             # 오류 메시지를 포함한 안전한 답변으로 대체합니다.
             logger.error("Guardrail: 가드레일 실행 중 오류 발생: %s", e)
-            safe_answer = f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            safe_answer = (
+                f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            )
             return {"answer": safe_answer}

@@ -26,8 +26,8 @@ type ApiChatMessage = {
 type PendingRequest = {
   query: string;
   top_k: number;
-  doc_ids_filter: string[] | null;
-  chat_history: ApiChatMessage[];
+  // doc_ids_filter: string[] | null;
+  // chat_history: ApiChatMessage[];
   session_id: string | null;
 };
 
@@ -87,16 +87,11 @@ export function useChatSession(token: string, docFilter: string | null, sessionI
         return;
       }
 
-      const historyForApi: ApiChatMessage[] = messages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-      }));
-
       const pending: PendingRequest = {
         query: payload.query,
         top_k: 3,
-        doc_ids_filter: payload.docFilter ? [payload.docFilter] : null,
-        chat_history: historyForApi,
+        // doc_ids_filter: payload.docFilter ? [payload.docFilter] : null,
+        // chat_history: historyForApi,
         session_id: sessionId,
       };
       const outgoing: Message = {

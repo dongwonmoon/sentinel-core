@@ -329,3 +329,51 @@ class AgentAuditLog(Base):
 
     def __repr__(self) -> str:
         return f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
+
+
+class ChatTurnMemory(Base):
+    """
+    '사건 기억'을 위한 벡터 테이블
+    각 대화 턴(사용자+AI)의 원본 텍스트와 임베딩을 저장하여
+    과거의 특정 '사건'(예: 코드 수정)을 RAG로 인출(retrieve)하는 데 사용됩니다.
+    """
+
+    __tablename__ = "chat_turn_memory"
+
+    turn_id: Mapped[int] = mapped_column(
+        BIGINT,
+        Identity(),
+        primary_key=True,
+        comment="대화 턴의 고유 ID (자동 증가)",
+    )
+    session_id: Mapped[str] = mapped_column(
+        Text,
+        index=True,
+        nullable=False,
+        comment="관련 채팅 세션 ID",
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="사용자 ID. User 테이블의 외래 키.",
+    )
+    turn_text: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="해당 턴의 전체 텍스트 (User + AI)"
+    )
+    embedding: Mapped[List[float]] = mapped_column(
+        "embedding",
+        Text,  # pgvector 타입 (alembic에서 vector(dim)으로 명시)
+        nullable=False,
+        comment="turn_text에 대한 벡터 임베딩",
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.current_timestamp(),
+        comment="메시지 생성 시간 (UTC)",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        )

@@ -31,11 +31,18 @@ Do NOT choose a tool from the [FAILED TOOLS] list.
 """
 
 FINAL_ANSWER_PROMPT_TEMPLATE = """
-You are a precise enterprise assistant. Respond using only the supplied context.
-If the context lacks the answer, clearly say you cannot find the information.
+You are a precise enterprise assistant. 
+Use the [HYBRID CONTEXT] to understand the conversation's history and relevant facts.
+Use the [TOOL CONTEXT] (if provided) as the primary source for answering the QUESTION.
+If the contexts lack the answer, clearly say you cannot find the information.
 
-[CONTEXT]
-{context}
+[HYBRID CONTEXT]
+(This includes conversation summary, relevant past memories, and recent chat lines)
+{hybrid_context}
+
+[TOOL CONTEXT]
+(This includes RAG, WebSearch, or CodeExecution results)
+{tool_context}
 
 [USER PROFILE]
 {user_profile}
@@ -111,4 +118,18 @@ Respond ONLY with a concise summary in Korean.
 {commit_messages}
 
 [SUMMARY]
+"""
+
+MEMORY_SUMMARY_PROMPT_TEMPLATE = """
+You are a memory summarizer. Based on the following chat history,
+condense the key facts, user's intent, and important entities (like filenames or code blocks)
+into a concise summary. This summary will be used as memory for a future AI.
+
+[CHAT HISTORY]
+{history}
+
+[USER'S CURRENT QUESTION]
+{question}
+
+[CONCISE SUMMARY]
 """
