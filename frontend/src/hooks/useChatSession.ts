@@ -10,6 +10,10 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   sources?: { display_name: string }[];
+  toolCall?: {
+    name: string;
+    status: "running" | "completed";
+  }
 };
 
 type ApiHistoryMessage = {
@@ -101,8 +105,12 @@ export function useChatSession(token: string, docFilter: string | null, sessionI
       };
       setMessages((prev) => [...prev, outgoing]);
       streamQuery(token, pending, {
-        onToken: (tokenChunk) =>
-          setMessages((prev) => updateAssistant(prev, tokenChunk)),
+        onToken: (tokenPayload) =>
+          setMessages((prev) => updateAssistant(prev, tokenPayload)),
+        onToolStart: (toolName) =>
+          setMessages((prev) => addOrUpdateToolCall(prev, toolName)),
+        onToolEnd: (toolName) =>
+          setMessages((prev) => completeToolCall(prev, toolName)),
         onSources: (sources) =>
           setMessages((prev) => attachSources(prev, sources)),
         onError: (errorMsg) => notify(errorMsg),
@@ -117,22 +125,72 @@ export function useChatSession(token: string, docFilter: string | null, sessionI
   return { messages, sendMessage, loading };
 }
 
-function updateAssistant(messages: Message[], chunk: string) {
+function updateAssistant(
+  messages: Message[], 
+  tokenPayload: { chunk: string; new_message: boolean }
+) {
   const last = messages[messages.length - 1];
-  if (!last || last.role !== "assistant") {
+  if (
+    !last || 
+    last.role !== "assistant" || 
+    last.toolCall || 
+    tokenPayload.new_message
+  ) {
     const newMsg: Message = {
       id: `assistant-${Date.now()}`,
       role: "assistant",
-      content: chunk,
+      content: tokenPayload.chunk,
     };
     return [...messages, newMsg];
   }
   const updated = [...messages];
   updated[updated.length - 1] = {
     ...last,
-    content: last.content + chunk,
+    content: last.content + tokenPayload.chunk,
   };
   return updated;
+}
+
+function addOrUpdateToolCall(messages: Message[], toolName: string): Message[] {
+  const last = messages[messages.length - 1];
+
+  // 마지막 메시지가 이미 '실행 중인 도구' 위젯이라면, 텍스트만 업데이트
+  // (예: RAG -> WebSearch로 연속 실행 시)
+  if (last && last.role === "assistant" && last.toolCall?.status === "running") {
+    const updated = [...messages];
+    updated[updated.length - 1] = {
+      ...last,
+      toolCall: { ...last.toolCall, name: toolName },
+    };
+    return updated;
+  }
+
+  // 아니라면 새 '도구 호출' 메시지 버블 추가
+  const newMsg: Message = {
+    id: `assistant-tool-${Date.now()}`,
+    role: "assistant",
+    content: "", // 도구 호출 메시지는 content가 비어있음
+    toolCall: {
+      name: toolName,
+      status: "running",
+    },
+  };
+  return [...messages, newMsg];
+}
+
+function completeToolCall(messages: Message[], toolName: string): Message[] {
+  const last = messages[messages.length - 1];
+  
+  // 마지막 메시지가 실행 중인 도구 메시지일 경우, 'completed'로 변경
+  if (last && last.role === "assistant" && last.toolCall?.name === toolName) {
+    const updated = [...messages];
+    updated[updated.length - 1] = {
+      ...last,
+      toolCall: { ...last.toolCall, status: "completed" },
+    };
+    return updated;
+  }
+  return messages; // 일치하는 메시지 없으면 원본 반환
 }
 
 function attachSources(messages: Message[], sources: { display_name: string }[]) {
@@ -145,6 +203,8 @@ function attachSources(messages: Message[], sources: { display_name: string }[])
 
 type StreamHandlers = {
   onToken: (token: string) => void;
+  onToolStart: (toolName: string) => void;
+  onToolEnd: (toolName: string) => void;
   onSources: (sources: { display_name: string }[]) => void;
   onError: (msg: string) => void;
   onStart: () => void;
@@ -228,6 +288,10 @@ async function streamQuery(
             reader.releaseLock();
             controller.abort(); // 스트림 종료
             break;
+          } else if (payload.event === "tool_start") {
+            handlers.onToolStart(payload.data.name);
+          } else if (payload.event === "tool_end") {
+            handlers.onToolEnd(payload.data.name);
           }
         }
       }
