@@ -4,7 +4,7 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 
 from langchain_core.documents import Document
 

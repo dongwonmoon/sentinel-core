@@ -7,6 +7,7 @@ API 라우터: 인증 (Authentication)
 - **/token**: 로그인 및 JWT 액세스 토큰 발급
 - **/me**: 현재 로그인된 사용자 정보 조회
 """
+from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -67,9 +68,7 @@ async def register_user(
 
     # 2. 비밀번호를 안전하게 해시합니다.
     hashed_password = security.get_password_hash(user_create.password)
-    logger.debug(
-        f"사용자 '{user_create.username}'의 비밀번호 해싱을 완료했습니다."
-    )
+    logger.debug(f"사용자 '{user_create.username}'의 비밀번호 해싱을 완료했습니다.")
 
     # 3. 새로운 사용자 정보를 데이터베이스에 삽입합니다.
     stmt = text(
@@ -87,8 +86,7 @@ async def register_user(
                 "username": user_create.username,
                 "hashed_password": hashed_password,
                 "is_active": True,
-                "permission_groups": user_create.permission_groups
-                or ["all_users"],
+                "permission_groups": user_create.permission_groups or ["all_users"],
             },
         )
         new_user_row = result.fetchone()
@@ -119,9 +117,7 @@ async def register_user(
         logger.exception(
             f"사용자 '{user_create.username}' 등록 중 예기치 않은 데이터베이스 오류가 발생했습니다."
         )
-        raise HTTPException(
-            status_code=500, detail=f"A database error occurred: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"A database error occurred: {e}")
 
 
 @router.post(
@@ -154,9 +150,7 @@ async def login_for_access_token(
         )
 
     if not user.is_active:
-        logger.warning(
-            f"로그인 실패: 사용자 '{username}'은(는) 비활성화된 계정입니다."
-        )
+        logger.warning(f"로그인 실패: 사용자 '{username}'은(는) 비활성화된 계정입니다.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )
@@ -169,9 +163,7 @@ async def login_for_access_token(
         "permission_groups": user.permission_groups,
     }
     access_token = security.create_access_token(data=access_token_data)
-    logger.info(
-        f"사용자 '{user.username}' 로그인에 성공하여 토큰을 발급했습니다."
-    )
+    logger.info(f"사용자 '{user.username}' 로그인에 성공하여 토큰을 발급했습니다.")
 
     return {"access_token": access_token, "token_type": "bearer"}
 

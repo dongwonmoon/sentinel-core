@@ -141,7 +141,7 @@ class Document(Base):
         nullable=False,
         comment="이 문서에 접근할 수 있는 권한 그룹 목록",
     )
-    metadata: Mapped[Dict[str, any]] = mapped_column(
+    extra_metadata: Mapped[Dict[str, any]] = mapped_column(
         JSONB, nullable=True, comment="추가적인 메타데이터 (JSONB)"
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -196,19 +196,15 @@ class DocumentChunk(Base):
         nullable=False,
         comment="텍스트에 대한 벡터 임베딩 (pgvector 타입)",
     )
-    metadata: Mapped[Dict[str, any]] = mapped_column(
+    extra_etadata: Mapped[Dict[str, any]] = mapped_column(
         JSONB, nullable=True, comment="청크 관련 추가 메타데이터 (JSONB)"
     )
 
     # DocumentChunk -> Document (N:1 관계)
-    document: Mapped["Document"] = relationship(
-        "Document", back_populates="chunks"
-    )
+    document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 
     def __repr__(self) -> str:
-        return (
-            f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
-        )
+        return f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
 
 
 class ChatHistory(Base):
@@ -242,9 +238,7 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="메시지 내용"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -334,6 +328,4 @@ class AgentAuditLog(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
-        )
+        return f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"

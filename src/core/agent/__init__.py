@@ -1,5 +1,5 @@
 """Sentinel Agent Package."""
 
-from ..orchestrator import Agent
+from ..orchestrator import Orchestrator as Agent
 
 __all__ = ["Agent"]
