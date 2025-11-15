@@ -146,7 +146,9 @@ def build_graph(nodes: AgentNodes) -> StateGraph:
 
     # 가드레일 통과 후, 그래프 실행을 종료합니다. (END는 LangGraph의 특별한 노드 이름)
     workflow.add_edge("output_guardrail", END)
-    logger.debug("'output_guardrail'에서 그래프 종료(END)로의 엣지를 추가했습니다.")
+    logger.debug(
+        "'output_guardrail'에서 그래프 종료(END)로의 엣지를 추가했습니다."
+    )
 
     # --- 3. 그래프 컴파일 ---
     # 위에서 정의된 노드와 엣지 구성을 바탕으로 실행 가능한 객체를 생성하여 반환합니다.

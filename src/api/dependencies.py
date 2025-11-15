@@ -63,7 +63,9 @@ def get_agent() -> Agent:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
+    logger.info(
+        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
+    )
     start_time = time.time()
 
     settings = get_settings()
@@ -97,7 +99,9 @@ def get_agent() -> Agent:
     )
 
     end_time = time.time()
-    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
+    logger.info(
+        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
+    )
     return agent
 
 
@@ -127,7 +131,9 @@ async def get_redis_client(
         try:
             yield redis
         except Exception as e:
-            logger.error(f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True)
+            logger.error(
+                f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True
+            )
             raise
         finally:
             logger.debug("Redis 클라이언트를 풀에 반환합니다.")
@@ -155,7 +161,9 @@ async def get_db_session(
     """
     vector_store = agent.vector_store
     if not isinstance(vector_store, PgVectorStore):
-        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
+        logger.error(
+            "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."
+        )
         raise HTTPException(
             status_code=501,
             detail="Database session is only available when using PgVectorStore.",
@@ -291,7 +299,9 @@ async def enforce_chat_rate_limit(
     """채팅 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
         # `rate_limiter`는 사용자 ID를 기준으로 'chat' 유형의 요청 횟수를 확인합니다.
-        await rate_limiter.assert_within_limit("chat", str(current_user.user_id))
+        await rate_limiter.assert_within_limit(
+            "chat", str(current_user.user_id)
+        )
         logger.debug(f"사용자 '{current_user.username}'의 채팅 속도 제한 통과.")
     except ValueError as exc:
         logger.warning(
@@ -308,8 +318,12 @@ async def enforce_document_rate_limit(
 ) -> None:
     """문서 관련 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
-        await rate_limiter.assert_within_limit("documents", str(current_user.user_id))
-        logger.debug(f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과.")
+        await rate_limiter.assert_within_limit(
+            "documents", str(current_user.user_id)
+        )
+        logger.debug(
+            f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과."
+        )
     except ValueError as exc:
         logger.warning(
             f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}"
