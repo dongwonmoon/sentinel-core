@@ -41,14 +41,18 @@ def get_settings() -> "Settings":
     start_time = time.time()
     settings = Settings()
     end_time = time.time()
-    logger.info(f"설정 객체 초기화 완료. (소요 시간: {end_time - start_time:.4f}초)")
+    logger.info(
+        f"설정 객체 초기화 완료. (소요 시간: {end_time - start_time:.4f}초)"
+    )
     # 데이터베이스 URL과 같은 주요 설정 값의 일부를 마스킹하여 로그에 출력
     # 실제 운영 환경에서는 더 정교한 마스킹 처리가 필요할 수 있습니다.
     logger.debug(
         f"로드된 데이터베이스 호스트: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}"
     )
     logger.debug(f"로드된 LLM 제공자 (Fast): {settings.llm.fast.provider}")
-    logger.debug(f"로드된 LLM 제공자 (Powerful): {settings.llm.powerful.provider}")
+    logger.debug(
+        f"로드된 LLM 제공자 (Powerful): {settings.llm.powerful.provider}"
+    )
     return settings
 
 
@@ -69,13 +73,17 @@ def yaml_config_settings_source(settings: BaseSettings) -> dict[str, Any]:
     config_path = Path(__file__).parent.parent.parent / "config.yml"
     logger.debug(f"'config.yml' 파일 경로: {config_path}")
     if not config_path.exists():
-        logger.warning(f"'config.yml' 파일을 찾을 수 없습니다. 기본값과 환경 변수만 사용합니다.")
+        logger.warning(
+            f"'config.yml' 파일을 찾을 수 없습니다. 기본값과 환경 변수만 사용합니다."
+        )
         return {}
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             yaml_content = yaml.safe_load(f)
             if yaml_content:
-                logger.info(f"'config.yml' 파일에서 설정을 성공적으로 로드했습니다.")
+                logger.info(
+                    f"'config.yml' 파일에서 설정을 성공적으로 로드했습니다."
+                )
                 return yaml_content
             else:
                 logger.warning(f"'config.yml' 파일이 비어 있습니다.")
@@ -92,12 +100,16 @@ def yaml_config_settings_source(settings: BaseSettings) -> dict[str, Any]:
 class AppSettings(BaseModel):
     """애플리케이션 기본 정보 및 로깅 설정"""
 
-    title: str = Field("Sentinel RAG System", description="애플리케이션의 공식 명칭")
+    title: str = Field(
+        "Sentinel RAG System", description="애플리케이션의 공식 명칭"
+    )
     description: str = Field(
         "Enterprise-grade RAG system with advanced capabilities.",
         description="애플리케이션에 대한 간략한 설명",
     )
-    log_level: str = Field("INFO", description="로그 레벨 (DEBUG, INFO, WARNING, ERROR)")
+    log_level: str = Field(
+        "INFO", description="로그 레벨 (DEBUG, INFO, WARNING, ERROR)"
+    )
     log_format: str = Field(
         "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(funcName)s - %(message)s",
         description="로그 출력 형식",
@@ -110,9 +122,12 @@ class LLMSettings(BaseModel):
     provider: Literal["ollama", "openai", "anthropic"] = Field(
         ..., description="LLM 제공자 (예: 'ollama', 'openai')"
     )
-    model_name: str = Field(..., description="사용할 LLM의 모델명 (예: 'gemma2:9b')")
+    model_name: str = Field(
+        ..., description="사용할 LLM의 모델명 (예: 'gemma2:9b')"
+    )
     api_base: Optional[str] = Field(
-        None, description="LLM API의 기본 URL (Ollama 또는 자체 호스팅 모델에 필요)"
+        None,
+        description="LLM API의 기본 URL (Ollama 또는 자체 호스팅 모델에 필요)",
     )
     temperature: float = Field(
         0.0, description="모델의 창의성 조절 (0.0: 결정적, 1.0: 창의적)"
@@ -152,7 +167,9 @@ class VectorStoreSettings(BaseModel):
     milvus_host: Optional[str] = Field(
         None, description="Milvus 사용 시 호스트 주소"
     )
-    milvus_port: Optional[int] = Field(None, description="Milvus 사용 시 포트 번호")
+    milvus_port: Optional[int] = Field(
+        None, description="Milvus 사용 시 포트 번호"
+    )
 
 
 class RerankerSettings(BaseModel):
@@ -180,7 +197,9 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = Field(..., description="PostgreSQL 사용자 이름")
     POSTGRES_PASSWORD: str = Field(..., description="PostgreSQL 비밀번호")
     POSTGRES_DB: str = Field(..., description="PostgreSQL 데이터베이스 이름")
-    POSTGRES_HOST: str = Field("localhost", description="PostgreSQL 호스트 주소")
+    POSTGRES_HOST: str = Field(
+        "localhost", description="PostgreSQL 호스트 주소"
+    )
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL 포트 번호")
 
     # Redis 연결 정보 (Celery 브로커 및 결과 백엔드용)
@@ -196,9 +215,13 @@ class Settings(BaseSettings):
 
     # 외부 서비스 API 키 (선택 사항)
     OPENAI_API_KEY: Optional[str] = Field(None, description="OpenAI API 키")
-    ANTHROPIC_API_KEY: Optional[str] = Field(None, description="Anthropic API 키")
+    ANTHROPIC_API_KEY: Optional[str] = Field(
+        None, description="Anthropic API 키"
+    )
     COHERE_API_KEY: Optional[str] = Field(None, description="Cohere API 키")
-    GOOGLE_API_KEY: Optional[str] = Field(None, description="Google API 키 (검색용)")
+    GOOGLE_API_KEY: Optional[str] = Field(
+        None, description="Google API 키 (검색용)"
+    )
     GOOGLE_CSE_ID: Optional[str] = Field(
         None, description="Google Custom Search Engine ID"
     )
@@ -214,10 +237,14 @@ class Settings(BaseSettings):
     )
 
     # --- config.yml 또는 기본값으로 관리되는 구조화된 설정 ---
-    app: AppSettings = Field(default_factory=AppSettings, description="앱 일반 설정")
+    app: AppSettings = Field(
+        default_factory=AppSettings, description="앱 일반 설정"
+    )
     llm: LLMGroup = Field(..., description="LLM 그룹 설정")
     embedding: EmbeddingSettings = Field(..., description="임베딩 모델 설정")
-    vector_store: VectorStoreSettings = Field(..., description="벡터 저장소 설정")
+    vector_store: VectorStoreSettings = Field(
+        ..., description="벡터 저장소 설정"
+    )
     reranker: RerankerSettings = Field(..., description="리랭커 설정")
     tools_enabled: List[
         Literal["duckduckgo_search", "google_search", "code_execution"]
@@ -230,7 +257,9 @@ class Settings(BaseSettings):
     def DATABASE_URL(self) -> str:
         """SQLAlchemy 비동기(asyncpg) 드라이버용 데이터베이스 URL을 생성합니다."""
         url = f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-        logger.debug(f"비동기 데이터베이스 URL 생성: postgresql+asyncpg://...@{self.POSTGRES_HOST}:***/...")
+        logger.debug(
+            f"비동기 데이터베이스 URL 생성: postgresql+asyncpg://...@{self.POSTGRES_HOST}:***/..."
+        )
         return url
 
     @computed_field(return_type=str)
@@ -238,7 +267,9 @@ class Settings(BaseSettings):
     def SYNC_DATABASE_URL(self) -> str:
         """Alembic 마이그레이션을 위한 동기(psycopg2) 드라이버용 데이터베이스 URL을 생성합니다."""
         url = f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-        logger.debug(f"동기 데이터베이스 URL 생성: postgresql://...@{self.POSTGRES_HOST}:***/...")
+        logger.debug(
+            f"동기 데이터베이스 URL 생성: postgresql://...@{self.POSTGRES_HOST}:***/..."
+        )
         return url
 
     @computed_field(return_type=str)
@@ -293,18 +324,19 @@ class Settings(BaseSettings):
             file_secret_settings,
         )
 
+
 # 아래 코드는 get_settings()를 직접 호출하여 설정 객체를 가져오는 예시입니다.
 # 애플리케이션의 다른 부분에서는 `from src.core.config import get_settings`를 통해
 # 캐시된 설정 객체를 안전하게 가져와 사용해야 합니다.
 if __name__ == "__main__":
     import time
-    
+
     # 로깅 기본 설정 (테스트용)
     logging.basicConfig(level=logging.DEBUG)
-    
+
     print("--- 설정 객체 로드 테스트 ---")
     settings_instance = get_settings()
-    
+
     print("\n[App Settings]")
     print(f"  - Title: {settings_instance.app.title}")
     print(f"  - Log Level: {settings_instance.app.log_level}")
@@ -312,16 +344,24 @@ if __name__ == "__main__":
     print("\n[LLM Settings]")
     print(f"  - Fast LLM Provider: {settings_instance.llm.fast.provider}")
     print(f"  - Fast LLM Model: {settings_instance.llm.fast.model_name}")
-    print(f"  - Powerful LLM Provider: {settings_instance.llm.powerful.provider}")
-    print(f"  - Powerful LLM Model: {settings_instance.llm.powerful.model_name}")
+    print(
+        f"  - Powerful LLM Provider: {settings_instance.llm.powerful.provider}"
+    )
+    print(
+        f"  - Powerful LLM Model: {settings_instance.llm.powerful.model_name}"
+    )
 
     print("\n[Database Settings]")
     # 비밀번호는 제외하고 출력
     print(f"  - DB Host: {settings_instance.POSTGRES_HOST}")
     print(f"  - DB Port: {settings_instance.POSTGRES_PORT}")
     print(f"  - DB User: {settings_instance.POSTGRES_USER}")
-    print(f"  - Async URL: {settings_instance.DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}")
-    print(f"  - Sync URL: {settings_instance.SYNC_DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}")
+    print(
+        f"  - Async URL: {settings_instance.DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}"
+    )
+    print(
+        f"  - Sync URL: {settings_instance.SYNC_DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}"
+    )
 
     print("\n[Enabled Tools]")
     print(f"  - {settings_instance.tools_enabled}")

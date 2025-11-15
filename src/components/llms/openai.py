@@ -44,7 +44,7 @@ class OpenAILLM(BaseLLM):
         """
         self._model_name = model_name
         self._provider = "openai"
-        
+
         api_display_name = "OpenAI"
         if base_url:
             # URL에서 도메인 이름을 추출하여 로깅에 사용 (예: 'api.groq.com')
@@ -72,7 +72,9 @@ class OpenAILLM(BaseLLM):
                 base_url=base_url,
                 **kwargs,
             )
-            logger.info(f"{api_display_name} 호환 LLM ('{model_name}') 초기화가 완료되었습니다.")
+            logger.info(
+                f"{api_display_name} 호환 LLM ('{model_name}') 초기화가 완료되었습니다."
+            )
         except Exception as e:
             logger.error(
                 f"{api_display_name} 호환 LLM ('{model_name}') 초기화 중 오류 발생: {e}",
@@ -121,7 +123,9 @@ class OpenAILLM(BaseLLM):
             yield chunk
         logger.debug(f"'{self.model_name}' 모델의 스트리밍이 종료되었습니다.")
 
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         OpenAI 호환 모델을 호출하여 전체 응답을 한 번에 받습니다.
         실제 로직은 `ChatOpenAI`의 `ainvoke` 메서드에 위임합니다.
@@ -133,7 +137,11 @@ class OpenAILLM(BaseLLM):
         Returns:
             Any: LLM의 전체 응답 내용 (`AIMessage` 객체).
         """
-        logger.debug(f"'{self.model_name}' 모델로 단일 응답(invoke) 요청을 시작합니다.")
+        logger.debug(
+            f"'{self.model_name}' 모델로 단일 응답(invoke) 요청을 시작합니다."
+        )
         response = await self.client.ainvoke(messages, config=config)
-        logger.debug(f"'{self.model_name}' 모델로부터 단일 응답을 수신했습니다.")
+        logger.debug(
+            f"'{self.model_name}' 모델로부터 단일 응답을 수신했습니다."
+        )
         return response

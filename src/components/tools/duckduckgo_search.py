@@ -34,7 +34,7 @@ def get_duckduckgo_search_tool() -> BaseTool:
         # `name` 속성을 시스템의 명명 규칙에 맞게 커스터마이징합니다.
         # (기본값은 'duckduckgo_search'로 동일하지만, 명시적으로 설정하여 일관성을 유지합니다.)
         tool.name = "duckduckgo_search"
-        
+
         # `description`은 `DuckDuckGoSearchRun` 클래스에 이미 잘 정의되어 있어
         # LLM이 그 기능을 이해하는 데 충분하므로 별도로 수정하지 않습니다.
         # (기본 설명: "A wrapper around DuckDuckGo Search. Useful for when you need to answer questions about current events. Input should be a search query.")
@@ -42,5 +42,7 @@ def get_duckduckgo_search_tool() -> BaseTool:
         logger.info(f"'{tool.name}' 도구 초기화가 완료되었습니다.")
         return tool
     except Exception as e:
-        logger.error(f"DuckDuckGo 검색 도구 초기화 중 오류 발생: {e}", exc_info=True)
+        logger.error(
+            f"DuckDuckGo 검색 도구 초기화 중 오류 발생: {e}", exc_info=True
+        )
         raise

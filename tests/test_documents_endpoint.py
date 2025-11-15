@@ -51,7 +51,9 @@ async def test_delete_document_keeps_repo_prefix():
         permission_groups=["core"],
         hashed_password="hash",
     )
-    body = schemas.DeleteDocumentRequest(doc_id_or_prefix="github-repo-sentinel-core/")
+    body = schemas.DeleteDocumentRequest(
+        doc_id_or_prefix="github-repo-sentinel-core/"
+    )
 
     result = await documents.delete_indexed_document(body, user, agent)
 

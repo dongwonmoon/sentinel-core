@@ -5,7 +5,9 @@ Ollama를 통해 호스팅되는 임베딩 모델을 사용하기 위한 구체�
 
 from typing import List, Optional
 
-from langchain_ollama.embeddings import OllamaEmbeddings as LangchainOllamaEmbeddings
+from langchain_ollama.embeddings import (
+    OllamaEmbeddings as LangchainOllamaEmbeddings,
+)
 
 from .base import BaseEmbeddingModel
 from ...core.logger import get_logger
@@ -32,7 +34,7 @@ class OllamaEmbedding(BaseEmbeddingModel):
         """
         self._provider = "ollama"
         self._model_name = model_name
-        
+
         logger.info(
             f"Ollama 임베딩 모델 ('{model_name}') 초기화를 시작합니다. (API: {base_url or '기본값'})"
         )
@@ -42,7 +44,9 @@ class OllamaEmbedding(BaseEmbeddingModel):
                 model=model_name,
                 base_url=base_url,
             )
-            logger.info(f"Ollama 임베딩 모델 ('{model_name}') 초기화가 완료되었습니다.")
+            logger.info(
+                f"Ollama 임베딩 모델 ('{model_name}') 초기화가 완료되었습니다."
+            )
         except Exception as e:
             logger.error(
                 f"Ollama 임베딩 모델 ('{model_name}') 초기화 중 오류 발생: {e}",
@@ -68,10 +72,14 @@ class OllamaEmbedding(BaseEmbeddingModel):
         Returns:
             List[List[float]]: 각 텍스트에 대한 임베딩 벡터의 리스트.
         """
-        logger.debug(f"'{self._model_name}' 모델로 {len(texts)}개 문서의 임베딩을 시작합니다.")
+        logger.debug(
+            f"'{self._model_name}' 모델로 {len(texts)}개 문서의 임베딩을 시작합니다."
+        )
         try:
             embeddings = self.client.embed_documents(texts)
-            logger.debug(f"{len(texts)}개 문서의 임베딩을 성공적으로 완료했습니다.")
+            logger.debug(
+                f"{len(texts)}개 문서의 임베딩을 성공적으로 완료했습니다."
+            )
             return embeddings
         except Exception as e:
             logger.error(
@@ -92,7 +100,9 @@ class OllamaEmbedding(BaseEmbeddingModel):
         Returns:
             List[float]: 주어진 텍스트에 대한 임베딩 벡터.
         """
-        logger.debug(f"'{self._model_name}' 모델로 쿼리 임베딩을 시작합니다: '{text[:80]}...'")
+        logger.debug(
+            f"'{self._model_name}' 모델로 쿼리 임베딩을 시작합니다: '{text[:80]}...'"
+        )
         try:
             embedding = self.client.embed_query(text)
             logger.debug("쿼리 임베딩을 성공적으로 완료했습니다.")

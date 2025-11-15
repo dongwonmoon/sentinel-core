@@ -64,6 +64,8 @@ def get_logger(name: str) -> logging.Logger:
         # 이 로거를 통해 출력되는 모든 로그는 이 핸들러를 거쳐 처리됩니다.
         logger.addHandler(handler)
 
-        logger.debug(f"'{name}' 로거가 '{log_level_str}' 레벨로 초기화되었습니다.")
+        logger.debug(
+            f"'{name}' 로거가 '{log_level_str}' 레벨로 초기화되었습니다."
+        )
 
     return logger

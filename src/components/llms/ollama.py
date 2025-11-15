@@ -41,8 +41,10 @@ class OllamaLLM(BaseLLM):
         """
         self._model_name = model_name
         self._provider = "ollama"
-        
-        logger.info(f"Ollama LLM ('{model_name}') 초기화를 시작합니다. (API: {base_url})")
+
+        logger.info(
+            f"Ollama LLM ('{model_name}') 초기화를 시작합니다. (API: {base_url})"
+        )
         try:
             # langchain-ollama의 ChatOllama 클라이언트를 초기화합니다.
             self._client = ChatOllama(
@@ -53,7 +55,10 @@ class OllamaLLM(BaseLLM):
             )
             logger.info(f"Ollama LLM ('{model_name}') 초기화가 완료되었습니다.")
         except Exception as e:
-            logger.error(f"Ollama LLM ('{model_name}') 초기화 중 오류 발생: {e}", exc_info=True)
+            logger.error(
+                f"Ollama LLM ('{model_name}') 초기화 중 오류 발생: {e}",
+                exc_info=True,
+            )
             # 초기화 실패 시, 애플리케이션이 계속 실행될 수 있도록 하되,
             # 이후 호출에서 오류가 발생하도록 처리할 수 있습니다.
             # 여기서는 예외를 다시 발생시켜, 시스템 시작 단계에서 문제를 인지하도록 합니다.
@@ -100,7 +105,9 @@ class OllamaLLM(BaseLLM):
             yield chunk
         logger.debug(f"'{self.model_name}' 모델의 스트리밍이 종료되었습니다.")
 
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         Ollama 모델을 호출하여 전체 응답을 한 번에 받습니다.
         `BaseLLM`의 추상 메서드를 구현하며, 실제 로직은 `ChatOllama`의 `ainvoke` 메서드에 위임합니다.
@@ -112,7 +119,11 @@ class OllamaLLM(BaseLLM):
         Returns:
             Any: LLM의 전체 응답 내용 (`AIMessage` 객체).
         """
-        logger.debug(f"'{self.model_name}' 모델로 단일 응답(invoke) 요청을 시작합니다.")
+        logger.debug(
+            f"'{self.model_name}' 모델로 단일 응답(invoke) 요청을 시작합니다."
+        )
         response = await self.client.ainvoke(messages, config=config)
-        logger.debug(f"'{self.model_name}' 모델로부터 단일 응답을 수신했습니다.")
+        logger.debug(
+            f"'{self.model_name}' 모델로부터 단일 응답을 수신했습니다."
+        )
         return response

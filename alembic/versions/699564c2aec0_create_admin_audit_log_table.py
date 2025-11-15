@@ -25,7 +25,11 @@ def upgrade() -> None:
     op.create_table(
         "admin_audit_log",
         sa.Column(
-            "log_id", sa.BIGINT(), sa.Identity(), nullable=False, primary_key=True
+            "log_id",
+            sa.BIGINT(),
+            sa.Identity(),
+            nullable=False,
+            primary_key=True,
         ),
         sa.Column(
             "actor_user_id",
@@ -40,8 +44,12 @@ def upgrade() -> None:
         sa.Column(
             "target_id", sa.TEXT(), nullable=True
         ),  # e.g., "user_id: 5" or "doc_id: file.txt"
-        sa.Column("old_value", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("new_value", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "old_value", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column(
+            "new_value", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(),

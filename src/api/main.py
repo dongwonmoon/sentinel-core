@@ -66,18 +66,21 @@ class RequestTimingMiddleware(BaseHTTPMiddleware):
         # 다음 미들웨어 또는 실제 엔드포인트로 요청을 전달합니다.
         response = await call_next(request)
         end_time = time.perf_counter()
-        
+
         duration_ms = (end_time - start_time) * 1000
         path = request.url.path
-        
+
         # 메트릭 수집기에 요청 경로와 처리 시간을 기록합니다.
         collector.observe_request(path, duration_ms)
         logger.debug(f"Request '{path}' processed in {duration_ms:.2f}ms")
-        
+
         return response
 
+
 app.add_middleware(RequestTimingMiddleware)
-logger.info("요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다.")
+logger.info(
+    "요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다."
+)
 
 
 # --- 라우터(Router) 등록 ---
@@ -90,16 +93,22 @@ logger.debug("'/api/auth' 라우터가 등록되었습니다.")
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 logger.debug("'/api/chat' 라우터가 등록되었습니다.")
 
-app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+app.include_router(
+    documents.router, prefix="/api/documents", tags=["Documents"]
+)
 logger.debug("'/api/documents' 라우터가 등록되었습니다.")
 
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 logger.debug("'/api/admin' 라우터가 등록되었습니다.")
 
-app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(
+    notifications.router, prefix="/api/notifications", tags=["Notifications"]
+)
 logger.debug("'/api/notifications' 라우터가 등록되었습니다.")
 
-app.include_router(scheduler.router, prefix="/api/scheduler", tags=["Scheduler"])
+app.include_router(
+    scheduler.router, prefix="/api/scheduler", tags=["Scheduler"]
+)
 logger.debug("'/api/scheduler' 라우터가 등록되었습니다.")
 
 app.include_router(metrics_router, prefix="/metrics", tags=["Metrics"])
@@ -115,5 +124,6 @@ async def read_root():
     """
     logger.debug("루트 엔드포인트 '/'가 호출되었습니다.")
     return {"message": f"Welcome to {settings.app.title}"}
+
 
 logger.info("FastAPI 애플리케이션 초기화가 완료되었습니다.")

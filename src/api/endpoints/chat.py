@@ -65,13 +65,17 @@ async def query_agent(
         "top_k": body.top_k,
         "doc_ids_filter": body.doc_ids_filter,
         "chat_history": (
-            [msg.dict() for msg in body.chat_history] if body.chat_history else []
+            [msg.dict() for msg in body.chat_history]
+            if body.chat_history
+            else []
         ),
         "user_id": str(current_user.user_id),
         "session_id": str(body.session_id),
         "user_profile": current_user.profile_text or "",
     }
-    logger.debug(f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료.")
+    logger.debug(
+        f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료."
+    )
 
     # `chat_service.stream_agent_response`는 비동기 제너레이터(Async Generator)를 반환합니다.
     # FastAPI는 이 제너레이터로부터 생성되는 데이터 조각들을 클라이언트로 스트리밍합니다.
@@ -86,7 +90,11 @@ async def query_agent(
     return StreamingResponse(response_generator, media_type="text/event-stream")
 
 
-@router.get("/sessions", response_model=schemas.ChatSessionListResponse, summary="사용자 채팅 세션 목록 조회")
+@router.get(
+    "/sessions",
+    response_model=schemas.ChatSessionListResponse,
+    summary="사용자 채팅 세션 목록 조회",
+)
 async def get_chat_sessions(
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
     session: AsyncSession = Depends(dependencies.get_db_session),
@@ -101,15 +109,23 @@ async def get_chat_sessions(
     Returns:
         schemas.ChatSessionListResponse: 채팅 세션 목록을 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다."
+    )
     sessions = await chat_service.fetch_user_sessions(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(f"사용자 '{current_user.username}'의 세션 {len(sessions)}개를 성공적으로 조회했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 세션 {len(sessions)}개를 성공적으로 조회했습니다."
+    )
     return schemas.ChatSessionListResponse(sessions=sessions)
 
 
-@router.get("/history/{session_id}", response_model=schemas.ChatHistoryResponse, summary="특정 세션의 대화 기록 조회")
+@router.get(
+    "/history/{session_id}",
+    response_model=schemas.ChatHistoryResponse,
+    summary="특정 세션의 대화 기록 조회",
+)
 async def get_chat_history(
     session_id: str,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
@@ -127,7 +143,9 @@ async def get_chat_history(
     Returns:
         schemas.ChatHistoryResponse: 대화 메시지 목록을 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'가 세션 '{session_id}'의 대화 기록 조회를 요청했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'가 세션 '{session_id}'의 대화 기록 조회를 요청했습니다."
+    )
     messages = await chat_service.fetch_chat_history(
         db_session=session, user_id=current_user.user_id, session_id=session_id
     )
@@ -137,7 +155,11 @@ async def get_chat_history(
     return schemas.ChatHistoryResponse(messages=messages)
 
 
-@router.get("/profile", response_model=schemas.UserProfileResponse, summary="사용자 프로필 조회")
+@router.get(
+    "/profile",
+    response_model=schemas.UserProfileResponse,
+    summary="사용자 프로필 조회",
+)
 async def get_user_profile(
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
     session: AsyncSession = Depends(dependencies.get_db_session),
@@ -153,15 +175,23 @@ async def get_user_profile(
     Returns:
         schemas.UserProfileResponse: 사용자의 프로필 텍스트를 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다."
+    )
     profile_text = await chat_service.fetch_user_profile(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다."
+    )
     return schemas.UserProfileResponse(profile_text=profile_text)
 
 
-@router.post("/profile", status_code=status.HTTP_204_NO_CONTENT, summary="사용자 프로필 업데이트")
+@router.post(
+    "/profile",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="사용자 프로필 업데이트",
+)
 async def update_user_profile(
     body: schemas.UserProfileUpdate,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
@@ -175,12 +205,16 @@ async def update_user_profile(
         current_user: 인증된 사용자 정보.
         session: DB 작업을 위한 비동기 세션.
     """
-    logger.info(f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다."
+    )
     await chat_service.upsert_user_profile(
         db_session=session,
         user_id=current_user.user_id,
         profile_text=body.profile_text,
     )
-    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 업데이트했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필을 성공적으로 업데이트했습니다."
+    )
     # HTTP 204 응답은 본문(body)을 포함하지 않으므로, 아무것도 반환하지 않습니다.
     return None

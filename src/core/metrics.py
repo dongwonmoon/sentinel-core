@@ -47,7 +47,8 @@ class MetricsCollector:
         with self._lock:
             return {
                 "request_metrics": {
-                    path: stats.snapshot() for path, stats in self._requests.items()
+                    path: stats.snapshot()
+                    for path, stats in self._requests.items()
                 },
                 "counters": dict(self._counters),
                 "generated_at": time.time(),

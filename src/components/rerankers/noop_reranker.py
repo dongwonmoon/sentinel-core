@@ -24,7 +24,9 @@ class NoOpReranker(BaseReranker):
 
     def __init__(self):
         self._provider = "none"
-        logger.info("NoOpReranker가 초기화되었습니다. 리랭킹 단계를 건너뜁니다.")
+        logger.info(
+            "NoOpReranker가 초기화되었습니다. 리랭킹 단계를 건너뜁니다."
+        )
 
     @property
     def provider(self) -> str:

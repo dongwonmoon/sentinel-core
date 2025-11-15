@@ -22,7 +22,10 @@ class OpenAIEmbedding(BaseEmbeddingModel):
     """
 
     def __init__(
-        self, model_name: str, api_key: Optional[str], base_url: Optional[str] = None
+        self,
+        model_name: str,
+        api_key: Optional[str],
+        base_url: Optional[str] = None,
     ):
         """
         OpenAIEmbedding 클래스의 인스턴스를 초기화합니다.
@@ -51,7 +54,9 @@ class OpenAIEmbedding(BaseEmbeddingModel):
                 api_key=api_key,
                 base_url=base_url,
             )
-            logger.info(f"OpenAI 임베딩 모델 ('{model_name}') 초기화가 완료되었습니다.")
+            logger.info(
+                f"OpenAI 임베딩 모델 ('{model_name}') 초기화가 완료되었습니다."
+            )
         except Exception as e:
             logger.error(
                 f"OpenAI 임베딩 모델 ('{model_name}') 초기화 중 오류 발생: {e}",
@@ -77,10 +82,14 @@ class OpenAIEmbedding(BaseEmbeddingModel):
         Returns:
             List[List[float]]: 각 텍스트에 대한 임베딩 벡터의 리스트.
         """
-        logger.debug(f"'{self._model_name}' 모델로 {len(texts)}개 문서의 임베딩을 시작합니다.")
+        logger.debug(
+            f"'{self._model_name}' 모델로 {len(texts)}개 문서의 임베딩을 시작합니다."
+        )
         try:
             embeddings = self.client.embed_documents(texts)
-            logger.debug(f"{len(texts)}개 문서의 임베딩을 성공적으로 완료했습니다.")
+            logger.debug(
+                f"{len(texts)}개 문서의 임베딩을 성공적으로 완료했습니다."
+            )
             return embeddings
         except Exception as e:
             logger.error(
@@ -100,7 +109,9 @@ class OpenAIEmbedding(BaseEmbeddingModel):
         Returns:
             List[float]: 주어진 텍스트에 대한 임베딩 벡터.
         """
-        logger.debug(f"'{self._model_name}' 모델로 쿼리 임베딩을 시작합니다: '{text[:80]}...'")
+        logger.debug(
+            f"'{self._model_name}' 모델로 쿼리 임베딩을 시작합니다: '{text[:80]}...'"
+        )
         try:
             embedding = self.client.embed_query(text)
             logger.debug("쿼리 임베딩을 성공적으로 완료했습니다.")

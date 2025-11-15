@@ -32,7 +32,9 @@ class BaseVectorStore(ABC):
         pass
 
     @abstractmethod
-    async def upsert_documents(self, documents_data: List[Dict[str, Any]]) -> None:
+    async def upsert_documents(
+        self, documents_data: List[Dict[str, Any]]
+    ) -> None:
         """
         문서와 그에 대한 벡터 임베딩을 데이터베이스에 추가하거나 업데이트(Upsert)합니다.
 

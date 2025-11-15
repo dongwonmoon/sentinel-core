@@ -22,7 +22,9 @@ logger = get_logger(__name__)
 
 
 @router.post(
-    "/tasks", response_model=schemas.TaskResponse, status_code=status.HTTP_201_CREATED
+    "/tasks",
+    response_model=schemas.TaskResponse,
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_scheduled_task(
     task_data: schemas.TaskCreate,
@@ -34,7 +36,8 @@ async def create_scheduled_task(
     # 1. Crontab 유효성 검사
     if not croniter.is_valid(task_data.schedule):
         raise HTTPException(
-            status_code=400, detail=f"Invalid crontab format: {task_data.schedule}"
+            status_code=400,
+            detail=f"Invalid crontab format: {task_data.schedule}",
         )
 
     # 2. (중요) 작업 유형(task_name) 및 인자(kwargs) 유효성 검사
@@ -95,4 +98,6 @@ async def delete_scheduled_task(
         {"task_id": task_id, "user_id": current_user.user_id}
     )
     if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Task not found or access denied.")
+        raise HTTPException(
+            status_code=404, detail="Task not found or access denied."
+        )

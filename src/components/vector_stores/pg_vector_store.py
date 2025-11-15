@@ -35,22 +35,29 @@ class PgVectorStore(BaseVectorStore):
         """
         self._provider = "pg_vector"
         self.embedding_model = embedding_model
-        
+
         logger.info("PgVectorStore 초기화를 시작합니다...")
         try:
             # SQLAlchemy를 사용하여 비동기 데이터베이스 엔진을 생성합니다.
             # 이 엔진은 커넥션 풀을 관리하며, DB와 비동기적으로 통신합니다.
-            self.engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
-            
+            self.engine = create_async_engine(
+                settings.DATABASE_URL, pool_pre_ping=True
+            )
+
             # 비동기 세션을 생성하기 위한 세션 팩토리(Session Factory)를 설정합니다.
             # `get_db_session` 의존성이나 백그라운드 작업에서 이 팩토리를 사용하여
             # 독립적인 DB 세션을 생성하게 됩니다.
             self.AsyncSessionLocal = sessionmaker(
                 bind=self.engine, class_=AsyncSession, expire_on_commit=False
             )
-            logger.info("PgVectorStore 초기화 완료. 비동기 엔진 및 세션 팩토리가 설정되었습니다.")
+            logger.info(
+                "PgVectorStore 초기화 완료. 비동기 엔진 및 세션 팩토리가 설정되었습니다."
+            )
         except Exception as e:
-            logger.error(f"PgVectorStore 초기화 중 데이터베이스 엔진 생성 실패: {e}", exc_info=True)
+            logger.error(
+                f"PgVectorStore 초기화 중 데이터베이스 엔진 생성 실패: {e}",
+                exc_info=True,
+            )
             raise
 
     @property
@@ -58,15 +65,17 @@ class PgVectorStore(BaseVectorStore):
         """벡터 저장소 제공자 이름("pg_vector")을 반환합니다."""
         return self._provider
 
-    async def upsert_documents(self, documents_data: List[Dict[str, Any]]) -> None:
+    async def upsert_documents(
+        self, documents_data: List[Dict[str, Any]]
+    ) -> None:
         """
         문서와 그 청크들을 데이터베이스에 비동기적으로 추가하거나 업데이트(Upsert)합니다.
-        
+
         이 메서드는 단일 트랜잭션 내에서 다음 작업들을 수행합니다:
         1. `documents` 테이블에 문서 정보를 Upsert (INSERT or UPDATE) 합니다.
         2. `document_chunks` 테이블에서 해당 문서의 기존 청크들을 모두 삭제합니다.
         3. 새로운 청크 정보들을 `document_chunks` 테이블에 삽입합니다.
-        
+
         Args:
             documents_data (List[Dict[str, Any]]): 업로드할 문서 및 청크 데이터 리스트.
         """
@@ -75,7 +84,9 @@ class PgVectorStore(BaseVectorStore):
             return
 
         doc_ids = list(set(d["doc_id"] for d in documents_data))
-        logger.info(f"{len(doc_ids)}개 문서에 대한 {len(documents_data)}개 청크의 Upsert 작업을 시작합니다.")
+        logger.info(
+            f"{len(doc_ids)}개 문서에 대한 {len(documents_data)}개 청크의 Upsert 작업을 시작합니다."
+        )
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():  # 트랜잭션 시작
@@ -92,8 +103,9 @@ class PgVectorStore(BaseVectorStore):
                         }
                         for d in documents_data
                     }
-                    
-                    stmt_docs_upsert = text("""
+
+                    stmt_docs_upsert = text(
+                        """
                         INSERT INTO documents (doc_id, source_type, permission_groups, metadata, owner_user_id)
                         VALUES (:doc_id, :source_type, :permission_groups, :metadata, :owner_user_id)
                         ON CONFLICT (doc_id) DO UPDATE SET
@@ -102,14 +114,25 @@ class PgVectorStore(BaseVectorStore):
                             metadata = EXCLUDED.metadata,
                             owner_user_id = EXCLUDED.owner_user_id,
                             last_verified_at = CURRENT_TIMESTAMP
-                    """)
-                    await session.execute(stmt_docs_upsert, list(doc_infos.values()))
-                    logger.debug(f"{len(doc_infos)}개의 레코드를 `documents` 테이블에 Upsert했습니다.")
+                    """
+                    )
+                    await session.execute(
+                        stmt_docs_upsert, list(doc_infos.values())
+                    )
+                    logger.debug(
+                        f"{len(doc_infos)}개의 레코드를 `documents` 테이블에 Upsert했습니다."
+                    )
 
                     # 2. `document_chunks` 테이블에서 기존 청크 삭제
-                    stmt_chunks_delete = text("DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)")
-                    await session.execute(stmt_chunks_delete, {"doc_ids": doc_ids})
-                    logger.debug(f"문서 ID {doc_ids}에 해당하는 기존 청크들을 삭제했습니다.")
+                    stmt_chunks_delete = text(
+                        "DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)"
+                    )
+                    await session.execute(
+                        stmt_chunks_delete, {"doc_ids": doc_ids}
+                    )
+                    logger.debug(
+                        f"문서 ID {doc_ids}에 해당하는 기존 청크들을 삭제했습니다."
+                    )
 
                     # 3. 새로운 청크 정보 삽입
                     chunk_data_list = [
@@ -121,18 +144,27 @@ class PgVectorStore(BaseVectorStore):
                         }
                         for d in documents_data
                     ]
-                    
-                    stmt_chunks_insert = text("""
+
+                    stmt_chunks_insert = text(
+                        """
                         INSERT INTO document_chunks (doc_id, chunk_text, embedding, metadata)
                         VALUES (:doc_id, :chunk_text, :embedding, :metadata)
-                    """)
+                    """
+                    )
                     await session.execute(stmt_chunks_insert, chunk_data_list)
-                    logger.debug(f"{len(chunk_data_list)}개의 새로운 청크를 `document_chunks` 테이블에 삽입했습니다.")
+                    logger.debug(
+                        f"{len(chunk_data_list)}개의 새로운 청크를 `document_chunks` 테이블에 삽입했습니다."
+                    )
 
-                    logger.info(f"문서 ID {doc_ids}에 대한 Upsert 트랜잭션이 성공적으로 완료되었습니다.")
+                    logger.info(
+                        f"문서 ID {doc_ids}에 대한 Upsert 트랜잭션이 성공적으로 완료되었습니다."
+                    )
 
                 except Exception as e:
-                    logger.error(f"PgVectorStore Upsert 중 오류 발생! 트랜잭션이 롤백됩니다. 오류: {e}", exc_info=True)
+                    logger.error(
+                        f"PgVectorStore Upsert 중 오류 발생! 트랜잭션이 롤백됩니다. 오류: {e}",
+                        exc_info=True,
+                    )
                     # session.begin() 컨텍스트 관리자가 자동으로 롤백을 처리합니다.
                     raise
 
@@ -157,7 +189,9 @@ class PgVectorStore(BaseVectorStore):
             List[Dict[str, Any]]: 검색된 문서 청크 정보의 리스트.
         """
         query_vec_str = str(query_embedding)
-        logger.debug(f"벡터 검색 시작. k={k}, 허용 그룹: {allowed_groups}, 문서 필터: {doc_ids_filter}")
+        logger.debug(
+            f"벡터 검색 시작. k={k}, 허용 그룹: {allowed_groups}, 문서 필터: {doc_ids_filter}"
+        )
 
         # 기본 SQL 쿼리문: `documents`와 `document_chunks`를 조인하고,
         # `&&` 연산자를 사용하여 권한 그룹이 교차하는지 확인합니다.
@@ -176,13 +210,17 @@ class PgVectorStore(BaseVectorStore):
                 WHERE
                     d.permission_groups && :allowed_groups
         """
-        params = {"allowed_groups": allowed_groups, "query_embedding": query_vec_str, "top_k": k}
+        params = {
+            "allowed_groups": allowed_groups,
+            "query_embedding": query_vec_str,
+            "top_k": k,
+        }
 
         # 선택적 필터링 조건 추가
         if doc_ids_filter:
             sql_query += " AND d.doc_id = ANY(:doc_ids_filter)"
             params["doc_ids_filter"] = doc_ids_filter
-        
+
         sql_query += " ORDER BY distance LIMIT :top_k) "
         sql_query += "SELECT * FROM relevant_chunks;"
 
@@ -191,13 +229,19 @@ class PgVectorStore(BaseVectorStore):
             search_results = [
                 {
                     "chunk_text": row.chunk_text,
-                    "metadata": json.loads(row.metadata) if isinstance(row.metadata, str) else row.metadata,
+                    "metadata": (
+                        json.loads(row.metadata)
+                        if isinstance(row.metadata, str)
+                        else row.metadata
+                    ),
                     "score": 1 - row.distance,  # 거리를 유사도 점수(0~1)로 변환
                 }
                 for row in result
             ]
 
-        logger.info(f"벡터 검색 완료. {len(search_results)}개의 결과를 찾았습니다.")
+        logger.info(
+            f"벡터 검색 완료. {len(search_results)}개의 결과를 찾았습니다."
+        )
         return search_results
 
     async def delete_documents(self, doc_ids: List[str]) -> int:
@@ -216,14 +260,18 @@ class PgVectorStore(BaseVectorStore):
         if not doc_ids:
             logger.warning("삭제할 문서 ID가 제공되지 않았습니다.")
             return 0
-            
+
         logger.info(f"문서 ID {doc_ids}에 대한 삭제 작업을 시작합니다.")
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():
-                stmt = text("DELETE FROM documents WHERE doc_id = ANY(:doc_ids)")
+                stmt = text(
+                    "DELETE FROM documents WHERE doc_id = ANY(:doc_ids)"
+                )
                 result = await session.execute(stmt, {"doc_ids": doc_ids})
                 deleted_count = result.rowcount
 
-        logger.info(f"총 {deleted_count}개의 문서 레코드와 관련 청크들이 삭제되었습니다.")
+        logger.info(
+            f"총 {deleted_count}개의 문서 레코드와 관련 청크들이 삭제되었습니다."
+        )
         return deleted_count

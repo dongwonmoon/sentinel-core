@@ -53,13 +53,15 @@ class Orchestrator:
         # 주입된 컴포넌트들을 인스턴스 변수로 저장합니다.
         self.vector_store = vector_store
         self.reranker = reranker
-        
+
         # 도구 리스트를 이름-객체 매핑 형태의 딕셔너리로 변환하여 접근성을 높입니다.
         tools_dict = {tool.name: tool for tool in tools}
-        
+
         logger.info(f"사용 가능한 도구: {list(tools_dict.keys())}")
         logger.info(f"Fast LLM: {fast_llm.model_name} ({fast_llm.provider})")
-        logger.info(f"Powerful LLM: {powerful_llm.model_name} ({powerful_llm.provider})")
+        logger.info(
+            f"Powerful LLM: {powerful_llm.model_name} ({powerful_llm.provider})"
+        )
         logger.info(f"Vector Store: {vector_store.provider}")
         logger.info(f"Reranker: {reranker.provider}")
 
@@ -103,10 +105,10 @@ class Orchestrator:
             inputs.get("question", "")[:80],
         )
         logger.debug("스트림 입력 데이터: %s", inputs)
-        
+
         # `self.graph_app.astream_events`를 비동기적으로 순회하며
         # 발생하는 각 이벤트를 그대로 `yield`합니다.
         async for event in self.graph_app.astream_events(inputs, version="v1"):
             yield event
-        
+
         logger.info("LangGraph 스트림이 종료되었습니다.")

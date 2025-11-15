@@ -48,7 +48,10 @@ async def list_accessible_documents(
                     raw_metadata = raw_metadata.tobytes()
                 metadata_dict = json.loads(raw_metadata.decode("utf-8"))
             except Exception:  # pragma: no cover - 안전로그
-                logger.debug("문서 '%s'의 metadata 바이너리를 파싱하지 못했습니다.", row.doc_id)
+                logger.debug(
+                    "문서 '%s'의 metadata 바이너리를 파싱하지 못했습니다.",
+                    row.doc_id,
+                )
 
         source_type = row.source_type or ""
         filter_key = row.doc_id
@@ -63,7 +66,9 @@ async def list_accessible_documents(
         elif source_type == "github-repo":
             repo_name = metadata_dict.get("repo_name")
             if not repo_name:
-                repo_name = row.doc_id.split("/", 1)[0].replace("github-repo-", "", 1)
+                repo_name = row.doc_id.split("/", 1)[0].replace(
+                    "github-repo-", "", 1
+                )
             filter_key = f"github-repo-{repo_name}/"
             display_name = repo_name
         elif source_type == "file-upload":
@@ -92,6 +97,8 @@ async def delete_document_by_prefix(
 def normalize_document_prefix(doc_id_or_prefix: str) -> str:
     """사용자 입력을 내부 접두사 규칙에 맞게 조정."""
     prefix = doc_id_or_prefix
-    if not prefix.startswith("file-upload-") and not prefix.startswith("github-repo-"):
+    if not prefix.startswith("file-upload-") and not prefix.startswith(
+        "github-repo-"
+    ):
         prefix = f"file-upload-{prefix}"
     return prefix

@@ -84,7 +84,9 @@ def create_embedding_model(
         elif full_settings and getattr(full_settings, "OLLAMA_BASE_URL", None):
             base_url = full_settings.OLLAMA_BASE_URL
 
-        logger.warning(f"[DEBUG] FINAL base_url USED FOR EMBEDDING = {base_url}")
+        logger.warning(
+            f"[DEBUG] FINAL base_url USED FOR EMBEDDING = {base_url}"
+        )
 
         return OllamaEmbedding(
             model_name=embedding_settings.model_name, base_url=base_url
@@ -100,7 +102,9 @@ def create_embedding_model(
     # (필요 시) HuggingFace 등 다른 프로바이더 추가
     # elif embedding_settings.provider == "huggingface":
     #     ...
-    raise ValueError(f"Unsupported embedding provider: {embedding_settings.provider}")
+    raise ValueError(
+        f"Unsupported embedding provider: {embedding_settings.provider}"
+    )
 
 
 def create_vector_store(
@@ -113,7 +117,9 @@ def create_vector_store(
     if vs_settings.provider == "pg_vector":
         from ..components.vector_stores.pg_vector_store import PgVectorStore
 
-        return PgVectorStore(settings=full_settings, embedding_model=embedding_model)
+        return PgVectorStore(
+            settings=full_settings, embedding_model=embedding_model
+        )
     if vs_settings.provider == "milvus":
         from ..components.vector_stores.milvus_vector_store import (
             MilvusVectorStore,
@@ -122,7 +128,9 @@ def create_vector_store(
         return MilvusVectorStore(
             settings=full_settings, embedding_model=embedding_model
         )
-    raise ValueError(f"Unsupported vector store provider: {vs_settings.provider}")
+    raise ValueError(
+        f"Unsupported vector store provider: {vs_settings.provider}"
+    )
 
 
 def create_reranker(
@@ -142,7 +150,9 @@ def create_reranker(
     # (필요 시) Cohere 등 다른 프로바이더 추가
     # elif reranker_settings.provider == "cohere":
     #     ...
-    raise ValueError(f"Unsupported reranker provider: {reranker_settings.provider}")
+    raise ValueError(
+        f"Unsupported reranker provider: {reranker_settings.provider}"
+    )
 
 
 def get_tools(enabled_tools_config: List[str]) -> List[BaseTool]:

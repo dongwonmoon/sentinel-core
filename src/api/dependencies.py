@@ -60,7 +60,9 @@ def get_agent() -> Agent:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
+    logger.info(
+        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
+    )
     start_time = time.time()
 
     settings = get_settings()
@@ -94,7 +96,9 @@ def get_agent() -> Agent:
     )
 
     end_time = time.time()
-    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
+    logger.info(
+        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
+    )
     return agent
 
 
@@ -120,7 +124,9 @@ async def get_db_session(
     """
     vector_store = agent.vector_store
     if not isinstance(vector_store, PgVectorStore):
-        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
+        logger.error(
+            "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."
+        )
         raise HTTPException(
             status_code=501,
             detail="Database session is only available when using PgVectorStore.",
@@ -130,7 +136,8 @@ async def get_db_session(
     if not session_local:
         logger.critical("데이터베이스 세션 팩토리가 초기화되지 않았습니다!")
         raise HTTPException(
-            status_code=500, detail="Database session factory is not initialized."
+            status_code=500,
+            detail="Database session factory is not initialized.",
         )
 
     session: AsyncSession = session_local()
@@ -143,7 +150,10 @@ async def get_db_session(
         logger.debug(f"DB 세션 [ID: {id(session)}] 커밋됨.")
     except Exception as e:
         # 경로 함수에서 예외가 발생하면 트랜잭션을 롤백합니다.
-        logger.error(f"DB 세션 [ID: {id(session)}]에서 예외 발생. 롤백합니다. 에러: {e}", exc_info=True)
+        logger.error(
+            f"DB 세션 [ID: {id(session)}]에서 예외 발생. 롤백합니다. 에러: {e}",
+            exc_info=True,
+        )
         await session.rollback()
         # 발생한 예외를 다시 상위로 전달하여 FastAPI가 처리하도록 합니다.
         raise
@@ -192,7 +202,9 @@ async def get_current_user(
     user_row = result.fetchone()
 
     if user_row is None:
-        logger.warning(f"토큰은 유효하지만 DB에 사용자 '{token_data.username}'가 존재하지 않습니다.")
+        logger.warning(
+            f"토큰은 유효하지만 DB에 사용자 '{token_data.username}'가 존재하지 않습니다."
+        )
         raise credentials_exception
 
     # 권한 그룹을 동적으로 확장합니다 (예: it_admin -> it 권한 자동 부여).
@@ -210,7 +222,9 @@ async def get_current_user(
         logger.warning(f"비활성화된 사용자 '{user.username}'의 접근 시도.")
         raise HTTPException(status_code=400, detail="비활성화된 사용자입니다.")
 
-    logger.debug(f"사용자 '{user.username}' 인증 및 정보 조회 완료. 권한: {user.permission_groups}")
+    logger.debug(
+        f"사용자 '{user.username}' 인증 및 정보 조회 완료. 권한: {user.permission_groups}"
+    )
     return user
 
 
@@ -241,16 +255,21 @@ async def get_admin_user(
 
 # --- 속도 제한(Rate Limit) 의존성 ---
 
+
 async def enforce_chat_rate_limit(
     current_user: schemas.UserInDB = Depends(get_current_user),
 ) -> None:
     """채팅 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
         # `rate_limiter`는 사용자 ID를 기준으로 'chat' 유형의 요청 횟수를 확인합니다.
-        await rate_limiter.assert_within_limit("chat", str(current_user.user_id))
+        await rate_limiter.assert_within_limit(
+            "chat", str(current_user.user_id)
+        )
         logger.debug(f"사용자 '{current_user.username}'의 채팅 속도 제한 통과.")
     except ValueError as exc:
-        logger.warning(f"사용자 '{current_user.username}'가 채팅 속도 제한에 도달했습니다: {exc}")
+        logger.warning(
+            f"사용자 '{current_user.username}'가 채팅 속도 제한에 도달했습니다: {exc}"
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=str(exc),
@@ -262,10 +281,16 @@ async def enforce_document_rate_limit(
 ) -> None:
     """문서 관련 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
-        await rate_limiter.assert_within_limit("documents", str(current_user.user_id))
-        logger.debug(f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과.")
+        await rate_limiter.assert_within_limit(
+            "documents", str(current_user.user_id)
+        )
+        logger.debug(
+            f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과."
+        )
     except ValueError as exc:
-        logger.warning(f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}")
+        logger.warning(
+            f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}"
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=str(exc),

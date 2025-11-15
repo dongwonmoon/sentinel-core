@@ -39,7 +39,9 @@ def upgrade() -> None:
         sa.Column(
             "last_verified_at",
             sa.TIMESTAMP(),
-            server_default=sa.text("CURRENT_TIMESTAMP"),  # 생성 시 현재 시간으로 설정
+            server_default=sa.text(
+                "CURRENT_TIMESTAMP"
+            ),  # 생성 시 현재 시간으로 설정
             nullable=True,
         ),
     )
@@ -48,7 +50,11 @@ def upgrade() -> None:
     op.create_table(
         "scheduled_tasks",
         sa.Column(
-            "task_id", sa.BIGINT(), sa.Identity(), nullable=False, primary_key=True
+            "task_id",
+            sa.BIGINT(),
+            sa.Identity(),
+            nullable=False,
+            primary_key=True,
         ),
         sa.Column(
             "user_id",
@@ -64,10 +70,15 @@ def upgrade() -> None:
             "schedule", sa.VARCHAR(length=100), nullable=False
         ),  # e.g., "0 9 * * *" (crontab)
         sa.Column(
-            "task_kwargs", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+            "task_kwargs",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
         ),  # e.g., {"repo_url": "..."}
         sa.Column(
-            "is_active", sa.BOOLEAN(), server_default=sa.text("true"), nullable=False
+            "is_active",
+            sa.BOOLEAN(),
+            server_default=sa.text("true"),
+            nullable=False,
         ),
         sa.Column(
             "created_at",
