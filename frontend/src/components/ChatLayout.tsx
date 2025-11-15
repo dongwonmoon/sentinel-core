@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Sidebar from "./Sidebar";
 import ChatWindow from "./ChatWindow";
 import ContextPanel from "./ContextPanel";
@@ -10,6 +10,7 @@ import { useChatSessionsList } from "../hooks/useChatSessionsList";
 import { useAuth } from "../providers/AuthProvider";
 import PanelTabs from "./PanelTabs";
 import { PanelId, useChatShellState } from "../hooks/useChatShellState";
+import CommandPalette from "./CommandPalette";
 
 export default function ChatLayout() {
   const { user, signOut } = useAuth();
@@ -40,6 +41,36 @@ export default function ChatLayout() {
           }))
         : [],
     [documents],
+  );
+
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "/") {
+        event.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  const commands = useMemo(
+    () => [
+      {
+        id: "new-chat",
+        label: "새 대화 시작",
+        action: () => {
+          handleNewChat();
+          setShowCommandPalette(false);
+        },
+      },
+      // Add more commands here
+    ],
+    [handleNewChat],
   );
 
   return (
@@ -75,20 +106,30 @@ export default function ChatLayout() {
 
           {/* 탭 콘텐츠 (패널 내부에 스크롤 추가) */}
           <div style={{ flex: 1, overflowY: 'auto', background: 'rgba(10, 12, 20, 0.7)' }}>
-            {activePanel === "context" ? (
-              <ContextPanel
-                documents={documentOptions}
-                onRefresh={refetch}
-                onSelectDoc={setSelectedDoc}
-              />
-            ) : (
-              <SchedulerPanel />
-            )}
+            <div className={`fade-in-out ${activePanel === "context" ? "active" : ""}`}>
+              {activePanel === "context" && (
+                <ContextPanel
+                  documents={documentOptions}
+                  onRefresh={refetch}
+                  onSelectDoc={setSelectedDoc}
+                />
+              )}
+            </div>
+            <div className={`fade-in-out ${activePanel === "scheduler" ? "active" : ""}`}>
+              {activePanel === "scheduler" && (
+                <SchedulerPanel />
+              )}
+            </div>
           </div>
         </div>
         
         <NotificationHost />
       </div>
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        commands={commands}
+      />
     </div>
   );
 }

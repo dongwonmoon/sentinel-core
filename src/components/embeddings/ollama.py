@@ -1,7 +1,13 @@
-from typing import List
-from langchain_ollama.embeddings import OllamaEmbeddings
+# -*- coding: utf-8 -*-
+"""
+Ollama를 통해 호스팅되는 임베딩 모델을 사용하기 위한 구체적인 구현체입니다.
+"""
+
+from typing import List, Optional
+
+from langchain_ollama.embeddings import OllamaEmbeddings as LangchainOllamaEmbeddings
+
 from .base import BaseEmbeddingModel
-from ...core.config import Settings
 from ...core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -10,57 +16,90 @@ logger = get_logger(__name__)
 class OllamaEmbedding(BaseEmbeddingModel):
     """
     Ollama를 사용하여 텍스트 임베딩을 수행하는 클래스입니다.
-    BaseEmbeddingModel을 상속받아 구체적인 임베딩 로직을 구현합니다.
+
+    `BaseEmbeddingModel` 추상 클래스를 상속받아, `langchain-ollama`의 `OllamaEmbeddings`를 사용하여
+    문서 및 쿼리 임베딩 로직을 구체적으로 구현합니다.
     """
 
-    def __init__(self, model_name: str, base_url: str = None):
+    def __init__(self, model_name: str, base_url: Optional[str] = None):
         """
         OllamaEmbedding 클래스의 인스턴스를 초기화합니다.
 
         Args:
-            settings: 애플리케이션의 설정을 담고 있는 Settings 객체입니다.
-                       Ollama 서버 URL과 모델 이름을 가져오는 데 사용됩니다.
+            model_name (str): 사용할 Ollama 임베딩 모델의 이름 (예: "nomic-embed-text").
+            base_url (Optional[str]): Ollama API 서버의 기본 URL.
+                                      None일 경우, `langchain-ollama`의 기본값(보통 http://localhost:11434)이 사용됩니다.
         """
-        # 설정 객체로부터 Ollama 관련 설정을 사용하여 OllamaEmbeddings 인스턴스를 생성합니다.
-        self.client = OllamaEmbeddings(
-            base_url=base_url,
-            model=model_name,
+        self._provider = "ollama"
+        self._model_name = model_name
+        
+        logger.info(
+            f"Ollama 임베딩 모델 ('{model_name}') 초기화를 시작합니다. (API: {base_url or '기본값'})"
         )
-        logger.info(f"Ollama 임베딩 모델 초기화 완료. 모델: {model_name}")
-        logger.warning(
-            f"[OLLAMA DEBUG] OllamaEmbedding initialized with base_url={base_url}"
-        )
+        try:
+            # langchain-ollama의 OllamaEmbeddings 클라이언트를 초기화합니다.
+            self.client = LangchainOllamaEmbeddings(
+                model=model_name,
+                base_url=base_url,
+            )
+            logger.info(f"Ollama 임베딩 모델 ('{model_name}') 초기화가 완료되었습니다.")
+        except Exception as e:
+            logger.error(
+                f"Ollama 임베딩 모델 ('{model_name}') 초기화 중 오류 발생: {e}",
+                exc_info=True,
+            )
+            raise
+
+    @property
+    def provider(self) -> str:
+        """
+        임베딩 모델 제공자 이름("ollama")을 반환합니다.
+        """
+        return self._provider
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
-        Ollama 모델을 사용하여 여러 텍스트를 임베딩 벡터로 변환합니다.
+        Ollama 모델을 사용하여 여러 텍스트(문서)를 임베딩 벡터로 변환합니다.
+        실제 로직은 `OllamaEmbeddings`의 `embed_documents` 메서드에 위임합니다.
 
         Args:
-            texts: 임베딩할 텍스트의 리스트입니다.
+            texts (List[str]): 임베딩할 텍스트의 리스트.
 
         Returns:
-            각 텍스트에 대한 임베딩 벡터의 리스트를 반환합니다.
+            List[List[float]]: 각 텍스트에 대한 임베딩 벡터의 리스트.
         """
+        logger.debug(f"'{self._model_name}' 모델로 {len(texts)}개 문서의 임베딩을 시작합니다.")
         try:
-            return self.client.embed_documents(texts)
+            embeddings = self.client.embed_documents(texts)
+            logger.debug(f"{len(texts)}개 문서의 임베딩을 성공적으로 완료했습니다.")
+            return embeddings
         except Exception as e:
-            logger.error("OLLAMA EMBEDDING ERROR")
-            logger.exception(e)  # full stack trace 출력
+            logger.error(
+                f"'{self._model_name}' 모델로 문서 임베딩 중 오류 발생: {e}",
+                exc_info=True,
+            )
+            # 오류 발생 시, 상위 호출자에게 예외를 다시 전달하여 처리하도록 합니다.
             raise
 
     def embed_query(self, text: str) -> List[float]:
         """
         Ollama 모델을 사용하여 단일 텍스트(쿼리)를 임베딩 벡터로 변환합니다.
+        실제 로직은 `OllamaEmbeddings`의 `embed_query` 메서드에 위임합니다.
 
         Args:
-            text: 임베딩할 단일 텍스트입니다.
+            text (str): 임베딩할 단일 텍스트.
 
         Returns:
-            주어진 텍스트에 대한 임베딩 벡터를 반환합니다.
+            List[float]: 주어진 텍스트에 대한 임베딩 벡터.
         """
+        logger.debug(f"'{self._model_name}' 모델로 쿼리 임베딩을 시작합니다: '{text[:80]}...'")
         try:
-            return self.client.embed_query(text)
+            embedding = self.client.embed_query(text)
+            logger.debug("쿼리 임베딩을 성공적으로 완료했습니다.")
+            return embedding
         except Exception as e:
-            logger.error("OLLAMA QUERY EMBEDDING ERROR")
-            logger.exception(e)
+            logger.error(
+                f"'{self._model_name}' 모델로 쿼리 임베딩 중 오류 발생: {e}",
+                exc_info=True,
+            )
             raise

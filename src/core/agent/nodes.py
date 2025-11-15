@@ -1,23 +1,33 @@
-"""Agent의 각 노드(Node)에 대한 실제 실행 로직을 정의합니다."""
+"""
+Agent의 각 노드(Node)에 대한 실제 실행 로직을 정의합니다.
+
+이 파일의 `AgentNodes` 클래스는 LangGraph 워크플로우의 각 단계를 구성하는
+메서드들을 포함합니다. 각 메서드는 `AgentState`를 입력으로 받아 특정 작업을
+수행하고, 상태를 업데이트하는 딕셔너리를 반환합니다.
+"""
 
 import asyncio
-from typing import List, Dict, Any
+from typing import Any, Dict
 
 from langchain_core.messages import HumanMessage
 
-from .state import AgentState, convert_history_dicts_to_messages
 from .. import prompts
 from ...components.llms.base import BaseLLM
 from ...components.rerankers.base import BaseReranker
 from ...components.tools.base import BaseTool
 from ...components.vector_stores.base import BaseVectorStore
 from ..logger import get_logger
+from .state import AgentState, convert_history_dicts_to_messages
 
 logger = get_logger(__name__)
 
 
 class AgentNodes:
-    """Agent의 각 노드에 대한 실행 로직을 담고 있는 클래스입니다."""
+    """
+    Agent 그래프의 각 노드에 대한 실행 로직을 담고 있는 클래스입니다.
+    각종 LLM, 벡터 저장소, 도구 등을 생성자에서 주입받아 사용합니다.
+    이는 의존성 주입(Dependency Injection) 패턴으로, 테스트 용이성과 유연성을 높입니다.
+    """
 
     def __init__(
         self,
@@ -35,7 +45,17 @@ class AgentNodes:
 
     async def route_query(self, state: AgentState) -> Dict[str, Any]:
         """
-        [노드] LLM을 이용해 질문을 분석하고 사용할 도구를 결정합니다.
+        [노드 1: 라우터] LLM을 이용해 사용자의 질문을 분석하고, 가장 적절한 도구를 결정합니다.
+
+        이 노드는 에이전트의 "두뇌" 역할을 하여, 질문의 의도를 파악하고
+        다음에 어떤 작업을 수행할지 결정하는 분기점입니다.
+        'fast' LLM을 사용하여 응답 시간을 최소화합니다.
+
+        Args:
+            state (AgentState): 현재 에이전트의 상태. 'question', 'chat_history' 등을 포함.
+
+        Returns:
+            Dict[str, Any]: 'chosen_llm'과 'tool_choice'를 포함하여 업데이트할 상태 딕셔너리.
         """
         logger.debug("--- [Agent Node: Route Query] ---")
         question = state["question"]
@@ -45,15 +65,22 @@ class AgentNodes:
             len(history),
             state.get("doc_ids_filter"),
         )
+
+        # 라우팅 결정을 위한 프롬프트를 생성합니다.
+        # 대화 기록, 질문, 이전에 실패한 도구 목록을 컨텍스트로 제공합니다.
         prompt = prompts.ROUTER_PROMPT_TEMPLATE.format(
             history="\n".join([f"{m.type}: {m.content}" for m in history]),
             question=question,
             failed_tools=state.get("failed_tools", []),
         )
 
+        # 'fast' LLM을 호출하여 신속하게 도구를 결정합니다.
         response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
 
         try:
+            # LLM의 응답(예: "[powerful, CodeExecution]")을 파싱합니다.
+            # LLM의 출력이 항상 일정한 형식을 따른다고 보장할 수 없으므로,
+            # 광범위한 예외 처리를 통해 안정성을 확보합니다.
             decision_text = response.content.strip().replace("[", "").replace("]", "")
             llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
             chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
@@ -63,32 +90,49 @@ class AgentNodes:
                 else "None"
             )
         except Exception as e:
+            # 파싱 실패 시, 가장 안전한 기본값('None')으로 대체하여 예기치 않은 동작을 방지합니다.
             logger.warning(f"라우터 출력 파싱 실패 ({e}). [fast, None]으로 Fallback.")
             chosen_llm, tool_choice = "fast", "None"
 
         logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 도구: {tool_choice}")
+        # 결정된 LLM과 도구를 상태에 추가하여 반환합니다.
         return {
             "chosen_llm": chosen_llm,
             "tool_choice": tool_choice,
-            "tool_outputs": {},
+            "tool_outputs": {},  # 다음 단계를 위해 tool_outputs를 초기화합니다.
         }
 
     async def run_rag_tool(self, state: AgentState) -> Dict[str, Any]:
-        """[노드] 'RAG' 도구를 실행합니다 (Retrieve -> Rerank)."""
+        """
+        [노드 2-A: RAG] 'RAG'(Retrieval-Augmented Generation) 도구를 실행합니다.
+        벡터 저장소에서 관련 문서를 검색(Retrieve)하고, 리랭커로 순위를 재조정(Rerank)합니다.
+
+        Returns:
+            Dict[str, Any]: 검색 및 리랭킹된 문서('rag_chunks')를 포함한 상태 딕셔너리.
+                           실패 시 'failed_tools'에 'RAG'를 추가하여 반환합니다.
+        """
         logger.debug("--- [Agent Node: RAG Tool] ---")
+        # 1. Retrieve: 벡터 저장소에서 문서를 검색합니다.
+        # 사용자의 권한 그룹(permission_groups)과 문서 필터(doc_ids_filter)를 고려하여
+        # 접근 제어와 필터링을 수행합니다.
         retrieved = await self.vector_store.search(
             query=state["question"],
             allowed_groups=state["permission_groups"],
-            k=10,
+            k=10,  # 리랭킹의 효율을 위해 충분히 많은 수(10개)를 우선 검색합니다.
             doc_ids_filter=state.get("doc_ids_filter"),
         )
+
+        # 검색 결과가 없으면, 'failed_tools' 상태에 'RAG'를 추가하고 종료합니다.
+        # 이 상태는 그래프의 조건부 엣지에서 재시도(retry) 로직을 트리거하는 데 사용됩니다.
         if not retrieved:
             logger.info("RAG 검색 결과 없음 - 질문='%s'", state["question"][:80])
             failed = state.get("failed_tools", [])
             failed.append("RAG")
             return {"tool_outputs": {"rag_chunks": []}, "failed_tools": failed}
 
+        # 2. Rerank: 검색된 문서를 리랭커를 사용해 질문과의 관련도 순으로 재정렬합니다.
         reranked = self.reranker.rerank(state["question"], retrieved)
+        # 최종적으로 LLM에 전달할 상위 K개의 문서를 선택합니다.
         final_docs = reranked[: state["top_k"]]
         logger.info(
             "RAG 검색 완료 - 원본 %d건, 리랭크 후 %d건",
@@ -96,6 +140,7 @@ class AgentNodes:
             len(final_docs),
         )
 
+        # 다음 노드에서 사용할 수 있도록 문서 내용을 딕셔너리 리스트로 변환하여 상태에 추가합니다.
         dict_docs = [
             {
                 "page_content": doc.page_content,
@@ -107,7 +152,9 @@ class AgentNodes:
         return {"tool_outputs": {"rag_chunks": dict_docs}}
 
     async def run_web_search_tool(self, state: AgentState) -> Dict[str, Any]:
-        """[노드] 'WebSearch' 도구를 실행합니다."""
+        """
+        [노드 2-B: 웹 검색] 'WebSearch' 도구(DuckDuckGo)를 실행하여 웹 검색을 수행합니다.
+        """
         logger.debug("--- [Agent Node: WebSearch Tool] ---")
         tool = self.tools.get("duckduckgo_search")
         if not tool:
@@ -120,7 +167,12 @@ class AgentNodes:
         return {"tool_outputs": {"search_result": result}}
 
     async def run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
-        """[노드] 'CodeExecution' 도구를 실행합니다."""
+        """
+        [노드 2-C: 코드 실행] 'CodeExecution' 도구를 실행합니다.
+        - 1단계: RAG를 통해 질문과 관련된 내부 코드 컨텍스트를 검색합니다.
+        - 2단계: 'powerful' LLM을 사용하여 컨텍스트 기반으로 실행할 코드를 생성합니다.
+        - 3단계: 생성된 코드를 Python REPL 도구로 실행하고 결과를 반환합니다.
+        """
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
@@ -129,44 +181,45 @@ class AgentNodes:
                 "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
+        # 1. RAG로 사내 코드 컨텍스트 검색 (선택적 단계)
         logger.debug("CodeExecution: RAG로 사내 코드 컨텍스트 검색 시도...")
         try:
+            # 'github-repo' 소스 타입으로 필터링하여 코드베이스 내의 관련 코드만 검색합니다.
             code_docs, _ = await asyncio.wait_for(
                 self.vector_store.search(
                     query=state["question"],
                     allowed_groups=state["permission_groups"],
-                    k=3,  # 관련성 높은 코드 3개
-                    source_type_filter="github-repo",  # 2단계에서 구현한 필터 사용
+                    k=3,  # 가장 관련성 높은 코드 3개
+                    source_type_filter="github-repo",
                 ),
-                timeout=5.0,
+                timeout=5.0,  # 컨텍스트 검색이 너무 오래 걸리지 않도록 타임아웃 설정
             )
-
-            if code_docs:
-                context_str = "\n\n---\n\n".join(
-                    [doc.page_content for doc, score in code_docs]
-                )
-                logger.info(
-                    "CodeExecution: %d개의 코드 스니펫을 컨텍스트로 주입.",
-                    len(code_docs),
-                )
-            else:
-                context_str = "No internal code context found."
-
+            context_str = (
+                "\n\n---\n\n".join([doc.page_content for doc, score in code_docs])
+                if code_docs
+                else "No internal code context found."
+            )
+            logger.info("CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs))
         except Exception as e:
             logger.warning("CodeExecution: RAG 컨텍스트 검색 실패: %s", e)
             context_str = "Error fetching code context."
 
+        # 2. 컨텍스트 기반으로 실행할 Python 코드 생성
         code_gen_prompt = prompts.CODE_GEN_PROMPT.format(
             question=state["question"], context=context_str
         )
         response = await self.llm_powerful.invoke(
             [HumanMessage(content=code_gen_prompt)], config={}
         )
+        # LLM이 생성한 코드 블록(```python ... ```)에서 순수 코드만 추출합니다.
         code_to_run = (
             response.content.strip().replace("```python", "").replace("```", "")
         )
         logger.info("코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run))
 
+        # 3. 생성된 코드 실행
+        # `tool.run`은 동기 함수이므로, `asyncio.to_thread`를 사용해 별도 스레드에서 실행하여
+        # 이벤트 루프가 블로킹되는 것을 방지합니다.
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
         logger.debug("코드 실행 결과 수신 - result='%s...'", str(code_result)[:120])
 
@@ -175,7 +228,13 @@ class AgentNodes:
         return {"tool_outputs": tool_outputs, "code_input": code_to_run}
 
     async def generate_final_answer(self, state: AgentState) -> Dict[str, Any]:
-        """[노드] 모든 컨텍스트를 종합하여 최종 답변을 생성합니다."""
+        """
+        [노드 3: 최종 답변 생성] 이전 노드들에서 수집된 모든 컨텍스트를 종합하여 최종 답변을 생성합니다.
+
+        - 라우터에서 선택된 LLM('fast' 또는 'powerful')을 사용합니다.
+        - 도구 실행 결과(RAG, 웹 검색, 코드 실행)를 프롬프트의 컨텍스트로 조합합니다.
+        - 대화 기록, 사용자 프로필 등 추가 정보를 포함하여 최종 프롬프트를 구성합니다.
+        """
         logger.debug("--- [Agent Node: Generate Final Answer] ---")
         llm = (
             self.llm_powerful
@@ -188,6 +247,7 @@ class AgentNodes:
             state.get("tool_choice"),
         )
 
+        # 도구 사용 여부와 결과에 따라 LLM에 제공할 컨텍스트 문자열을 동적으로 구성합니다.
         context_str = ""
         tool_choice = state.get("tool_choice")
         tool_outputs = state.get("tool_outputs", {})
@@ -204,14 +264,11 @@ class AgentNodes:
                 f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
             )
         elif tool_choice == "None":
-            context_str = (
-                "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
-            )
+            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
         else:
-            context_str = (
-                "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
-            )
+            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
 
+        # 최종 프롬프트를 조립합니다.
         history = convert_history_dicts_to_messages(state.get("chat_history", []))
         prompt = prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
             context=context_str,
@@ -221,6 +278,8 @@ class AgentNodes:
         )
         messages = history + [HumanMessage(content=prompt)]
 
+        # LLM 스트리밍 호출을 통해 최종 답변을 생성합니다.
+        # 이 스트림은 서비스 계층에서 클라이언트로 직접 전달됩니다.
         full_answer = ""
         async for chunk in llm.stream(messages, config={}):
             full_answer += chunk.content
@@ -228,22 +287,29 @@ class AgentNodes:
         return {"answer": full_answer}
 
     async def output_guardrail(self, state: AgentState) -> Dict[str, Any]:
-        """[노드] 최종 답변을 검증하고, 위험할 경우 안전한 메시지로 대체합니다."""
+        """
+        [노드 4: 출력 가드레일] 생성된 최종 답변을 검증하고, 유해하거나 부적절할 경우 안전한 메시지로 대체합니다.
+
+        이 노드는 에이전트의 마지막 방어선으로, 책임감 있는 AI(Responsible AI)를 위한
+        중요한 단계입니다. 'fast' LLM을 사용하여 빠르게 안전성 여부를 판단합니다.
+        """
         logger.debug("--- [Agent Node: Output Guardrail] ---")
         final_answer = state.get("answer", "")
         if not final_answer.strip():
-            logger.debug("Guardrail: 빈 답변, 통과.")
+            logger.debug("Guardrail: 빈 답변, 검증 없이 통과.")
             return {"answer": final_answer}
 
         prompt = prompts.GUARDRAIL_PROMPT_TEMPLATE.format(answer=final_answer)
 
         try:
+            # 타임아웃(3초)을 설정하여 가드레일 검증이 전체 응답 시간을 과도하게 지연시키지 않도록 합니다.
             response = await asyncio.wait_for(
                 self.llm_fast.invoke([HumanMessage(content=prompt)], config={}),
-                timeout=3.0,  # 가드레일은 3초 이내에 응답해야 함
+                timeout=3.0,
             )
             decision = response.content.strip().upper()
 
+            # LLM의 판단이 'UNSAFE'일 경우, 미리 정의된 안전한 메시지로 답변을 교체합니다.
             if "UNSAFE" in decision:
                 logger.warning(
                     "Guardrail: 답변이 UNSAFE로 분류됨. 원본: '%s...'",
@@ -256,8 +322,9 @@ class AgentNodes:
             return {"answer": final_answer}
 
         except Exception as e:
+            # 가드레일 실행 중 타임아웃 또는 기타 오류 발생 시, 안전을 위해 답변을 차단하고
+            # 오류 메시지를 포함한 안전한 답변으로 대체합니다.
             logger.error("Guardrail: 가드레일 실행 중 오류 발생: %s", e)
-            # 안전을 위해 가드레일 실패 시에도 답변을 차단
             safe_answer = (
                 f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
             )

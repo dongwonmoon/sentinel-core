@@ -4,6 +4,7 @@ import ProfileModal from "./ProfileModal";
 import { useNotifications } from "../hooks/useNotifications";
 import NotificationList from "./NotificationList";
 import { useAuth } from "../providers/AuthProvider";
+import EmptyChatList from "./EmptyChatList";
 
 type Props = {
   conversations: ChatSession[];
@@ -67,23 +68,23 @@ export default function Sidebar({
         </button>
 
         <div className="sidebar-list">
-          {conversations.length === 0 && (
-            <p className="muted">대화 기록이 없습니다.</p>
+          {conversations.length === 0 ? (
+            <EmptyChatList />
+          ) : (
+            conversations.map((item) => (
+              <button
+                key={item.session_id}
+                className={
+                  item.session_id === selectedConversation
+                    ? "list-item active"
+                    : "list-item"
+                }
+                onClick={() => onSelectConversation(item.session_id)}
+              >
+                {item.title}
+              </button>
+            ))
           )}
-
-          {conversations.map((item) => (
-            <button
-              key={item.session_id}
-              className={
-                item.session_id === selectedConversation
-                  ? "list-item active"
-                  : "list-item"
-              }
-              onClick={() => onSelectConversation(item.session_id)}
-            >
-              {item.title}
-            </button>
-          ))}
         </div>
       </aside>
 

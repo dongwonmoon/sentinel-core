@@ -42,7 +42,7 @@ export default function ChatWindow({
           ))}
         </select>
       </header>
-      <MessageList messages={messages} />
+      <MessageList messages={messages} sendMessage={sendMessage} />
       <Composer
         disabled={loading}
         onSend={(text) =>

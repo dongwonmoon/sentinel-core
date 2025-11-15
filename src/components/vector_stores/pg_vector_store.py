@@ -1,7 +1,11 @@
-import json
-from typing import List, Tuple, Optional
+# -*- coding: utf-8 -*-
+"""
+PostgreSQL과 `pgvector` 확장을 사용하는 벡터 저장소의 구체적인 구현체입니다.
+"""
 
-from langchain_core.documents import Document
+import json
+from typing import List, Dict, Any, Optional
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -16,8 +20,8 @@ logger = get_logger(__name__)
 
 class PgVectorStore(BaseVectorStore):
     """
-    PostgreSQL + pgvector를 사용하는 벡터 스토어 구현체입니다.
-    BaseVectorStore 추상 클래스를 상속받습니다.
+    PostgreSQL + pgvector를 사용하는 벡터 저장소 구현체입니다.
+    `BaseVectorStore` 추상 클래스를 상속받아, 실제 데이터베이스 연동 로직을 구현합니다.
     """
 
     def __init__(self, settings: Settings, embedding_model: BaseEmbeddingModel):
@@ -26,263 +30,200 @@ class PgVectorStore(BaseVectorStore):
         비동기 DB 엔진과 세션, 그리고 임베딩 모델을 설정합니다.
 
         Args:
-            settings: 애플리케이션의 설정을 담고 있는 Settings 객체입니다.
-            embedding_model: 텍스트를 벡터로 변환하는 데 사용할 임베딩 모델 객체입니다.
+            settings (Settings): 데이터베이스 연결 URL 등 애플리케이션 설정을 담은 객체.
+            embedding_model (BaseEmbeddingModel): 텍스트를 벡터로 변환하는 데 사용할 임베딩 모델 객체.
         """
-        # 비동기 데이터베이스 엔진을 생성합니다.
-        self.engine = create_async_engine(settings.DATABASE_URL)
-        # 비동기 세션을 생성하기 위한 세션 팩토리를 설정합니다.
-        self.AsyncSessionLocal = sessionmaker(
-            bind=self.engine, class_=AsyncSession, expire_on_commit=False
-        )
-        # 텍스트 임베딩을 위한 모델을 설정합니다.
+        self._provider = "pg_vector"
         self.embedding_model = embedding_model
-        logger.info(
-            "PgVectorStore 초기화 완료. 비동기 엔진 및 임베딩 모델이 설정되었습니다."
-        )
+        
+        logger.info("PgVectorStore 초기화를 시작합니다...")
+        try:
+            # SQLAlchemy를 사용하여 비동기 데이터베이스 엔진을 생성합니다.
+            # 이 엔진은 커넥션 풀을 관리하며, DB와 비동기적으로 통신합니다.
+            self.engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+            
+            # 비동기 세션을 생성하기 위한 세션 팩토리(Session Factory)를 설정합니다.
+            # `get_db_session` 의존성이나 백그라운드 작업에서 이 팩토리를 사용하여
+            # 독립적인 DB 세션을 생성하게 됩니다.
+            self.AsyncSessionLocal = sessionmaker(
+                bind=self.engine, class_=AsyncSession, expire_on_commit=False
+            )
+            logger.info("PgVectorStore 초기화 완료. 비동기 엔진 및 세션 팩토리가 설정되었습니다.")
+        except Exception as e:
+            logger.error(f"PgVectorStore 초기화 중 데이터베이스 엔진 생성 실패: {e}", exc_info=True)
+            raise
 
-    async def upsert_documents(
-        self,
-        documents: List[Document],
-        permission_groups: List[str],
-        owner_user_id: int,
-    ) -> None:
+    @property
+    def provider(self) -> str:
+        """벡터 저장소 제공자 이름("pg_vector")을 반환합니다."""
+        return self._provider
+
+    async def upsert_documents(self, documents_data: List[Dict[str, Any]]) -> None:
         """
-        문서를 벡터 스토어에 비동기적으로 추가하거나 업데이트(upsert)합니다.
-        문서 ID를 기준으로 기존 청크를 삭제한 후 새로 추가하는 방식을 사용합니다.
-
+        문서와 그 청크들을 데이터베이스에 비동기적으로 추가하거나 업데이트(Upsert)합니다.
+        
+        이 메서드는 단일 트랜잭션 내에서 다음 작업들을 수행합니다:
+        1. `documents` 테이블에 문서 정보를 Upsert (INSERT or UPDATE) 합니다.
+        2. `document_chunks` 테이블에서 해당 문서의 기존 청크들을 모두 삭제합니다.
+        3. 새로운 청크 정보들을 `document_chunks` 테이블에 삽입합니다.
+        
         Args:
-            documents: LangChain의 Document 객체 리스트입니다. 각 Document는 content와 metadata를 가집니다.
-            permission_groups: 이 문서들에 접근할 수 있는 권한 그룹의 리스트입니다.
+            documents_data (List[Dict[str, Any]]): 업로드할 문서 및 청크 데이터 리스트.
         """
-        if not documents:
+        if not documents_data:
+            logger.warning("Upsert할 문서 데이터가 없습니다.")
             return
 
-        # 문서 내용(page_content)을 임베딩합니다.
-        texts_to_embed = [
-            doc.metadata.get("embedding_source_text", doc.page_content)
-            for doc in documents
-        ]
-        embeddings = self.embedding_model.embed_documents(texts_to_embed)
-        doc_ids_to_clear = list(set(doc.metadata.get("doc_id") for doc in documents))
+        doc_ids = list(set(d["doc_id"] for d in documents_data))
+        logger.info(f"{len(doc_ids)}개 문서에 대한 {len(documents_data)}개 청크의 Upsert 작업을 시작합니다.")
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():  # 트랜잭션 시작
                 try:
-                    # 1. 기존 문서 및 청크 정보 업데이트/삭제
-                    # documents 테이블에 UPSERT
-                    doc_infos = {}
-                    for doc in documents:
-                        doc_id = doc.metadata.get("doc_id")
-                        if doc_id not in doc_infos:
-                            doc_infos[doc_id] = {
-                                "doc_id": doc_id,
-                                "source_type": doc.metadata.get("source_type"),
-                                "permission_groups": permission_groups,
-                                "metadata": json.dumps(doc.metadata),
-                                "owner_user_id": owner_user_id,
-                            }
+                    # 1. `documents` 테이블에 문서 정보 Upsert
+                    # doc_id를 기준으로 중복을 확인하고, 존재하면 업데이트, 없으면 삽입합니다.
+                    doc_infos = {
+                        d["doc_id"]: {
+                            "doc_id": d["doc_id"],
+                            "source_type": d.get("source_type"),
+                            "permission_groups": d.get("permission_groups", []),
+                            "metadata": json.dumps(d.get("metadata", {})),
+                            "owner_user_id": d.get("owner_user_id"),
+                        }
+                        for d in documents_data
+                    }
+                    
+                    stmt_docs_upsert = text("""
+                        INSERT INTO documents (doc_id, source_type, permission_groups, metadata, owner_user_id)
+                        VALUES (:doc_id, :source_type, :permission_groups, :metadata, :owner_user_id)
+                        ON CONFLICT (doc_id) DO UPDATE SET
+                            source_type = EXCLUDED.source_type,
+                            permission_groups = EXCLUDED.permission_groups,
+                            metadata = EXCLUDED.metadata,
+                            owner_user_id = EXCLUDED.owner_user_id,
+                            last_verified_at = CURRENT_TIMESTAMP
+                    """)
+                    await session.execute(stmt_docs_upsert, list(doc_infos.values()))
+                    logger.debug(f"{len(doc_infos)}개의 레코드를 `documents` 테이블에 Upsert했습니다.")
 
-                    if doc_infos:
-                        stmt_docs_upsert = text(
-                            """
-                            INSERT INTO documents (doc_id, source_type, permission_groups, metadata, owner_user_id)
-                            VALUES (:doc_id, :source_type, :permission_groups, :metadata, :owner_user_id) 
-                            ON CONFLICT (doc_id) DO UPDATE SET
-                                source_type = EXCLUDED.source_type,
-                                permission_groups = EXCLUDED.permission_groups,
-                                metadata = EXCLUDED.metadata,
-                                owner_user_id = EXCLUDED.owner_user_id,
-                                last_verified_at = CURRENT_TIMESTAMP
-                            """
-                        )
-                        await session.execute(
-                            stmt_docs_upsert, list(doc_infos.values())
-                        )
+                    # 2. `document_chunks` 테이블에서 기존 청크 삭제
+                    stmt_chunks_delete = text("DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)")
+                    await session.execute(stmt_chunks_delete, {"doc_ids": doc_ids})
+                    logger.debug(f"문서 ID {doc_ids}에 해당하는 기존 청크들을 삭제했습니다.")
 
-                    # document_chunks 테이블에서 기존 청크 삭제
-                    if doc_ids_to_clear:
-                        await session.execute(
-                            text(
-                                "DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)"
-                            ),
-                            {"doc_ids": doc_ids_to_clear},
-                        )
+                    # 3. 새로운 청크 정보 삽입
+                    chunk_data_list = [
+                        {
+                            "doc_id": d["doc_id"],
+                            "chunk_text": d["chunk_text"],
+                            "embedding": str(d["embedding"]),
+                            "metadata": json.dumps(d.get("metadata", {})),
+                        }
+                        for d in documents_data
+                    ]
+                    
+                    stmt_chunks_insert = text("""
+                        INSERT INTO document_chunks (doc_id, chunk_text, embedding, metadata)
+                        VALUES (:doc_id, :chunk_text, :embedding, :metadata)
+                    """)
+                    await session.execute(stmt_chunks_insert, chunk_data_list)
+                    logger.debug(f"{len(chunk_data_list)}개의 새로운 청크를 `document_chunks` 테이블에 삽입했습니다.")
 
-                    # 2. 새로운 청크 정보 추가
-                    chunk_data_list = []
-                    for i, doc in enumerate(documents):
-                        chunk_data_list.append(
-                            {
-                                "doc_id": doc.metadata.get("doc_id"),
-                                "chunk_text": doc.page_content,
-                                "embedding": str(embeddings[i]),
-                                "metadata": json.dumps(doc.metadata),
-                                "embedding_source_text": texts_to_embed[i],
-                            }
-                        )
-
-                    if chunk_data_list:
-                        stmt_chunks_insert = text(
-                            """
-                            INSERT INTO document_chunks (doc_id, chunk_text, embedding, metadata, embedding_source_text)
-                            VALUES (:doc_id, :chunk_text, :embedding, :metadata, :embedding_source_text)
-                            """
-                        )
-                        await session.execute(stmt_chunks_insert, chunk_data_list)
-
-                    logger.info(
-                        f"{len(doc_infos)}개 문서, {len(documents)}개 청크 Upsert 완료."
-                    )
+                    logger.info(f"문서 ID {doc_ids}에 대한 Upsert 트랜잭션이 성공적으로 완료되었습니다.")
 
                 except Exception as e:
-                    logger.error(
-                        f"PgVectorStore Upsert 중 에러 발생! 롤백됩니다. {e}",
-                        exc_info=True,
-                    )
+                    logger.error(f"PgVectorStore Upsert 중 오류 발생! 트랜잭션이 롤백됩니다. 오류: {e}", exc_info=True)
+                    # session.begin() 컨텍스트 관리자가 자동으로 롤백을 처리합니다.
                     raise
 
     async def search(
         self,
-        query: str,
+        query_embedding: List[float],
         allowed_groups: List[str],
         k: int = 4,
         doc_ids_filter: Optional[List[str]] = None,
-        source_type_filter: Optional[str] = None,
-    ) -> List[Tuple[Document, float]]:
+    ) -> List[Dict[str, Any]]:
         """
-        주어진 쿼리와 유사한 문서를 비동기적으로 검색합니다.
+        주어진 쿼리 임베딩과 유사한 문서를 비동기적으로 검색합니다.
         사용자 권한 그룹을 확인하여 접근 가능한 문서만 반환합니다.
 
         Args:
-            query: 검색할 쿼리 텍스트입니다.
-            allowed_groups: 사용자가 속한 권한 그룹의 리스트입니다.
-            k: 반환할 최대 문서 수입니다.
+            query_embedding (List[float]): 검색할 쿼리의 임베딩 벡터.
+            allowed_groups (List[str]): 사용자가 속한 권한 그룹 리스트.
+            k (int): 반환할 최대 문서 수.
+            doc_ids_filter (Optional[List[str]]): 검색 범위를 특정 문서 ID로 제한.
 
         Returns:
-            (Document, 유사도 점수) 튜플의 리스트를 반환합니다.
+            List[Dict[str, Any]]: 검색된 문서 청크 정보의 리스트.
         """
-        # 쿼리를 임베딩 벡터로 변환합니다.
-        query_embedding = self.embedding_model.embed_query(query)
         query_vec_str = str(query_embedding)
+        logger.debug(f"벡터 검색 시작. k={k}, 허용 그룹: {allowed_groups}, 문서 필터: {doc_ids_filter}")
 
-        # SQL 쿼리문. f-string을 사용하지만, SQL Injection에 안전하게 처리합니다.
-        # 벡터 검색 부분은 f-string으로, 나머지 파라미터는 바인딩으로 처리합니다.
-        sql_query = f"""
-            SELECT 
-                c.chunk_text, 
-                c.metadata,
-                c.embedding <-> '{query_vec_str}'::vector AS distance
-            FROM 
-                document_chunks AS c
-            JOIN 
-                documents AS d ON c.doc_id = d.doc_id
-            WHERE
-                d.permission_groups && :allowed_groups
+        # 기본 SQL 쿼리문: `documents`와 `document_chunks`를 조인하고,
+        # `&&` 연산자를 사용하여 권한 그룹이 교차하는지 확인합니다.
+        # `<->` 연산자는 코사인 거리(Cosine Distance)를 계산합니다. (0에 가까울수록 유사)
+        sql_query = """
+            WITH relevant_chunks AS (
+                SELECT 
+                    c.chunk_id,
+                    c.chunk_text, 
+                    c.metadata,
+                    c.embedding <-> :query_embedding AS distance
+                FROM 
+                    document_chunks AS c
+                JOIN 
+                    documents AS d ON c.doc_id = d.doc_id
+                WHERE
+                    d.permission_groups && :allowed_groups
         """
+        params = {"allowed_groups": allowed_groups, "query_embedding": query_vec_str, "top_k": k}
 
-        params = {"allowed_groups": allowed_groups, "top_k": k}
-
-        if source_type_filter:
-            sql_query += " AND d.source_type = :source_type"
-            params["source_type"] = source_type_filter
-
+        # 선택적 필터링 조건 추가
         if doc_ids_filter:
-            where_clauses = []
-            for i, f in enumerate(doc_ids_filter):
-                if f.endswith("/"):
-                    # 'file-upload-my_repo.zip/' 같은 접두사(Prefix)인 경우
-                    param_name = f"p{i}"
-                    where_clauses.append(f"d.doc_id LIKE :{param_name}")
-                    params[param_name] = f + "%"  # 와일드카드 추가
-                else:
-                    # 'file-upload-hr_policy.txt' 같은 정확한 ID인 경우
-                    param_name = f"id{i}"
-                    where_clauses.append(f"d.doc_id = :{param_name}")
-                    params[param_name] = f
-
-            if where_clauses:
-                sql_query += " AND (" + " OR ".join(where_clauses) + ")"
-                logger.info(f"컨텍스트 필터 적용: {where_clauses}")
-
-        sql_query += " ORDER BY distance LIMIT :top_k"
+            sql_query += " AND d.doc_id = ANY(:doc_ids_filter)"
+            params["doc_ids_filter"] = doc_ids_filter
+        
+        sql_query += " ORDER BY distance LIMIT :top_k) "
+        sql_query += "SELECT * FROM relevant_chunks;"
 
         async with self.AsyncSessionLocal() as session:
-            result = await session.execute(
-                text(sql_query),
-                params,
-            )
+            result = await session.execute(text(sql_query), params)
+            search_results = [
+                {
+                    "chunk_text": row.chunk_text,
+                    "metadata": json.loads(row.metadata) if isinstance(row.metadata, str) else row.metadata,
+                    "score": 1 - row.distance,  # 거리를 유사도 점수(0~1)로 변환
+                }
+                for row in result
+            ]
 
-            search_results = []
-            for row in result:
-                # DB에서 읽어온 메타데이터(JSON 문자열)를 파싱합니다.
-                metadata = (
-                    json.loads(row.metadata)
-                    if isinstance(row.metadata, str)
-                    else row.metadata
-                )
+        logger.info(f"벡터 검색 완료. {len(search_results)}개의 결과를 찾았습니다.")
+        return search_results
 
-                # LangChain Document 객체로 변환합니다.
-                doc = Document(page_content=row.chunk_text, metadata=metadata)
-                search_results.append((doc, row.distance))
-
-            logger.info(
-                f"'{query[:20]}...' 쿼리로 {len(search_results)}개 결과 검색 완료."
-            )
-            return search_results
-
-    async def delete_documents(
-        self, doc_id_or_prefix: str, permission_groups: List[str]
-    ) -> int:
+    async def delete_documents(self, doc_ids: List[str]) -> int:
         """
-        주어진 doc_id (정확히 일치) 또는 doc_id 접두사(prefix, e.g., 'github-repo-name/')와
-        일치하는 모든 문서를 삭제합니다.
+        주어진 문서 ID 목록과 일치하는 모든 문서를 삭제합니다.
 
-        삭제는 'documents' 테이블에서 시작되며, 'document_chunks' 테이블의
-        관련 청크는 'ON DELETE CASCADE' 외래 키 제약 조건에 의해 자동으로 삭제됩니다.
-        (참고: alembic/versions/711d0b8478e2...py 에서 ondelete='CASCADE' 설정 확인)
+        삭제는 `documents` 테이블에서 시작되며, `document_chunks` 테이블의
+        관련 청크는 데이터베이스의 `ON DELETE CASCADE` 외래 키 제약 조건에 의해 자동으로 삭제됩니다.
+
+        Args:
+            doc_ids (List[str]): 삭제할 문서의 고유 ID 리스트.
 
         Returns:
-            삭제된 문서(documents) 레코드의 수.
+            int: 성공적으로 삭제된 `documents` 레코드의 수.
         """
-        logger.info(
-            f"'{doc_id_or_prefix}' 문서 삭제 시도 (Groups: {permission_groups})..."
-        )
+        if not doc_ids:
+            logger.warning("삭제할 문서 ID가 제공되지 않았습니다.")
+            return 0
+            
+        logger.info(f"문서 ID {doc_ids}에 대한 삭제 작업을 시작합니다.")
 
-        # PgVectorStore가 직접 DB 세션을 관리하도록
         async with self.AsyncSessionLocal() as session:
-            async with session.begin():  # 트랜잭션 시작
+            async with session.begin():
+                stmt = text("DELETE FROM documents WHERE doc_id = ANY(:doc_ids)")
+                result = await session.execute(stmt, {"doc_ids": doc_ids})
+                deleted_count = result.rowcount
 
-                # 접두사(Prefix)인지, 정확한 ID인지 확인
-                if doc_id_or_prefix.endswith("/"):
-                    # 'github-repo-name/' 또는 'file-upload-zip-name/'
-                    stmt = text(
-                        """
-                        DELETE FROM documents
-                        WHERE doc_id LIKE :prefix
-                          AND permission_groups && :allowed_groups
-                    """
-                    )
-                    params = {
-                        "prefix": doc_id_or_prefix + "%",  # 와일드카드 추가
-                        "allowed_groups": permission_groups,
-                    }
-                else:
-                    # 'file-upload-hr_policy.txt'
-                    stmt = text(
-                        """
-                        DELETE FROM documents
-                        WHERE doc_id = :doc_id
-                          AND permission_groups && :allowed_groups
-                    """
-                    )
-                    params = {
-                        "doc_id": doc_id_or_prefix,
-                        "allowed_groups": permission_groups,
-                    }
-
-                result = await session.execute(stmt, params)
-                deleted_count = result.rowcount  # 영향을 받은(삭제된) 행의 수
-
-        logger.info(f"총 {deleted_count}개의 문서 레코드 삭제 완료.")
+        logger.info(f"총 {deleted_count}개의 문서 레코드와 관련 청크들이 삭제되었습니다.")
         return deleted_count
