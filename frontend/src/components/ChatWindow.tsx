@@ -1,10 +1,8 @@
-import { AuthResult } from "./AuthView";
 import MessageList from "./MessageList";
 import Composer from "./Composer";
 import { Message } from "../hooks/useChatSession";
 
 type Props = {
-  auth: AuthResult;
   documentOptions: { id: string; name: string }[];
   selectedDoc: string | null;
   onDocChange: (value: string | null) => void;
@@ -14,7 +12,6 @@ type Props = {
 };
 
 export default function ChatWindow({
-  auth,
   documentOptions,
   selectedDoc,
   onDocChange,

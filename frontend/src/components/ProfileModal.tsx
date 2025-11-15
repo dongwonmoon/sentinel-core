@@ -3,9 +3,10 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../lib/apiClient";
 import { notify } from "./NotificationHost";
+import { useAuth } from "../providers/AuthProvider";
+import Modal from "./Modal";
 
 type Props = {
-  token: string;
   onClose: () => void;
 };
 
@@ -14,7 +15,10 @@ type ProfileResponse = {
   profile_text: string;
 };
 
-export default function ProfileModal({ token, onClose }: Props) {
+export default function ProfileModal({ onClose }: Props) {
+  const { user } = useAuth();
+  if (!user) return null;
+
   const queryClient = useQueryClient();
   const [profileText, setProfileText] = useState("");
 
@@ -23,7 +27,7 @@ export default function ProfileModal({ token, onClose }: Props) {
     queryKey: ["profile"],
     queryFn: () =>
       apiRequest<ProfileResponse>("/chat/profile", {
-        token,
+        token: user.token,
         errorMessage: "프로필 로딩 실패",
       }),
   });
@@ -40,7 +44,7 @@ export default function ProfileModal({ token, onClose }: Props) {
     mutationFn: (text: string) =>
       apiRequest("/chat/profile", {
         method: "POST",
-        token,
+        token: user.token,
         json: { profile_text: text },
         errorMessage: "프로필 저장 실패",
       }),
@@ -62,15 +66,8 @@ export default function ProfileModal({ token, onClose }: Props) {
   const isLoading = isQueryLoading || isMutationPending;
 
   return (
-    // auth-wrapper 스타일을 재사용하여 오버레이(배경) 생성
-    <div className="auth-wrapper" style={{ zIndex: 10 }} onClick={onClose}>
-      {/* auth-card 스타일을 재사용하여 모달 창 생성 */}
-      <form
-        className="auth-card"
-        style={{ width: "min(500px, 90vw)" }}
-        onClick={(e) => e.stopPropagation()} // 모달 클릭 시 닫힘 방지
-        onSubmit={handleSubmit}
-      >
+    <Modal onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
         <h2>내 프로필</h2>
         <p className="muted">
           에이전트가 참고할 당신의 역할, 선호도 등을 자유롭게 입력하세요. (e.g.,
@@ -86,7 +83,7 @@ export default function ProfileModal({ token, onClose }: Props) {
         <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
           <button
             type="button"
-            className="ghost" //
+            className="ghost"
             onClick={onClose}
             disabled={isLoading}
           >
@@ -97,6 +94,6 @@ export default function ProfileModal({ token, onClose }: Props) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

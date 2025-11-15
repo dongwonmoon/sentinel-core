@@ -19,15 +19,13 @@ from fastapi import (
     UploadFile,
     Form,
 )
-from sqlalchemy import text
-
 from .. import dependencies, schemas
 from ...worker import tasks
 from ...worker.celery_app import celery_app
-from ...components.vector_stores.base import BaseVectorStore
 from ...components.vector_stores.pg_vector_store import PgVectorStore
 from ...core.agent import Agent
 from ...core.logger import get_logger
+from ...services import document_service
 
 router = APIRouter(
     prefix="/documents",
@@ -146,70 +144,10 @@ async def get_indexed_documents(
     현재 사용자가 접근할 수 있는, 인덱싱된 모든 지식 소스를 반환합니다.
     """
     logger.info(f"사용자 '{current_user.username}'가 인덱싱된 문서 조회를 요청함.")
-    # 직접 DB 세션을 주입받아 쿼리 실행
     try:
-        stmt = text(
-            """
-            SELECT doc_id, source_type, metadata
-            FROM documents
-            WHERE permission_groups && :allowed_groups
-            """
+        documents = await document_service.list_accessible_documents(
+            db_session, current_user.permission_groups
         )
-        result = await db_session.execute(
-            stmt, {"allowed_groups": current_user.permission_groups}
-        )
-        documents: dict[str, str] = {}
-        for row in result:
-            # metadata는 JSON/문자열/None 등 다양한 형태일 수 있으므로 안전하게 파싱
-            metadata_dict: dict[str, str] = {}
-            raw_metadata = row.metadata
-            if isinstance(raw_metadata, dict):
-                metadata_dict = raw_metadata
-            elif isinstance(raw_metadata, str) and raw_metadata:
-                try:
-                    metadata_dict = json.loads(raw_metadata)
-                except json.JSONDecodeError:
-                    logger.debug(
-                        "문서 '%s'의 metadata를 JSON으로 파싱하지 못했습니다: %s",
-                        row.doc_id,
-                        raw_metadata[:120],
-                    )
-            elif isinstance(raw_metadata, (bytes, bytearray, memoryview)):
-                try:
-                    if isinstance(raw_metadata, memoryview):
-                        raw_metadata = raw_metadata.tobytes()
-                    metadata_dict = json.loads(raw_metadata.decode("utf-8"))
-                except Exception:
-                    logger.debug(
-                        "문서 '%s'의 metadata 바이너리를 파싱하지 못했습니다.",
-                        row.doc_id,
-                    )
-            source_type = row.source_type or ""
-            filter_key = row.doc_id
-            display_name = metadata_dict.get("source") or row.doc_id
-
-            if source_type == "file-upload-zip":
-                zip_name = metadata_dict.get("original_zip") or row.doc_id
-                if not zip_name:
-                    # (Fallback)
-                    zip_name = row.doc_id.split("/")[0].replace("file-upload-", "")
-                filter_key = f"file-upload-{zip_name}/"
-                display_name = zip_name
-            elif source_type == "github-repo":
-                repo_name = metadata_dict.get("repo_name")
-                if not repo_name:
-                    # doc_id는 'github-repo-<repo>/<path>' 형태이므로, 첫 슬래시 이전까지 사용
-                    repo_name = row.doc_id.split("/", 1)[0].replace(
-                        "github-repo-", "", 1
-                    )
-                filter_key = f"github-repo-{repo_name}/"
-                display_name = repo_name
-            elif source_type == "file-upload":
-                filter_key = row.doc_id
-                display_name = metadata_dict.get("source") or row.doc_id
-
-            documents[filter_key] = display_name
-
         logger.info(
             f"사용자 '{current_user.username}'를 위해 {len(documents)}개의 인덱싱된 문서 조회 완료."
         )
@@ -262,18 +200,10 @@ async def delete_indexed_document(
         )
 
     try:
-        prefix = body.doc_id_or_prefix
-        if not prefix.startswith("file-upload-") and not prefix.startswith(
-            "github-repo-"
-        ):
-            prefix = f"file-upload-{prefix}"
-        if prefix.endswith("/"):
-            logger.debug("접두사 삭제 모드 - prefix=%s", prefix)
-        else:
-            logger.debug("단일 문서 삭제 모드 - doc_id=%s", prefix)
-        deleted_count = await vector_store.delete_documents(
-            doc_id_or_prefix=prefix,
-            permission_groups=current_user.permission_groups,
+        deleted_count = await document_service.delete_document_by_prefix(
+            vector_store,
+            body.doc_id_or_prefix,
+            current_user.permission_groups,
         )
         if deleted_count > 0:
             logger.info(

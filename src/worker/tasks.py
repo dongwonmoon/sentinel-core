@@ -265,7 +265,7 @@ def process_document_indexing(
 
             chunks = asyncio.run(
                 _load_and_split_documents(
-                    temp_file_path, file_name, text_splitter_default
+                    temp_file_path, file_name, text_splitter_default, fast_llm
                 )
             )
 

@@ -3,30 +3,28 @@ import { ChatSession } from "../hooks/useChatSessionsList";
 import ProfileModal from "./ProfileModal";
 import { useNotifications } from "../hooks/useNotifications";
 import NotificationList from "./NotificationList";
+import { useAuth } from "../providers/AuthProvider";
 
 type Props = {
-  username: string;
-  token: string;
   conversations: ChatSession[];
   selectedConversation: string | null;
   onSelectConversation: (id: string | null) => void;
-  onSignOut: () => void;
   onNewChat: () => void;
 };
 
 export default function Sidebar({
-  username,
-  token,
   conversations,
   selectedConversation,
   onSelectConversation,
-  onSignOut,
   onNewChat,
 }: Props) {
+  const { user, signOut } = useAuth();
+  if (!user) return null;
+
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   
-  const { data: notifications } = useNotifications(token);
+  const { data: notifications } = useNotifications(user.token);
   const unreadCount = notifications?.length || 0;
 
   return (
@@ -34,7 +32,7 @@ export default function Sidebar({
       <aside className="sidebar">
         <div className="sidebar-header">
           <div>
-            <p className="sidebar-username">{username}</p>
+            <p className="sidebar-username">{user.username}</p>
             <small>Sentinel Core</small>
           </div>
 
@@ -58,7 +56,7 @@ export default function Sidebar({
             >
               프로필
             </button>
-            <button className="ghost" onClick={onSignOut}>
+            <button className="ghost" onClick={signOut}>
               로그아웃
             </button>
           </div>
@@ -90,12 +88,11 @@ export default function Sidebar({
       </aside>
 
       {showProfileModal && (
-        <ProfileModal token={token} onClose={() => setShowProfileModal(false)} />
+        <ProfileModal onClose={() => setShowProfileModal(false)} />
       )}
       
       {showNotificationModal && (
         <NotificationList
-          token={token}
           notifications={notifications || []}
           onClose={() => setShowNotificationModal(false)}
         />

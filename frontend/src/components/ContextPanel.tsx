@@ -1,28 +1,32 @@
-import { useState, useRef } from "react";
-import { AuthResult } from "./AuthView";
+import { useMemo, useRef, useState } from "react";
 import { notify } from "./NotificationHost";
 import { apiRequest } from "../lib/apiClient";
-import { useTaskPolling, TaskStatusResponse } from "../hooks/useTaskPolling";
+import { TaskStatusResponse, useTaskPolling } from "../hooks/useTaskPolling";
+import { useAuth } from "../providers/AuthProvider";
 
 type Props = {
-  auth: AuthResult;
   documents: { id: string; name: string }[];
   onRefresh: () => void;
   onSelectDoc: (id: string | null) => void;
 };
 
-export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }: Props) {
+export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Props) {
+  const { user } = useAuth();
+  const token = user?.token;
+  if (!token) return null;
+
   const [uploadLoading, setUploadLoading] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoLoading, setRepoLoading] = useState(false);
   const [knowledgeName, setKnowledgeName] = useState("");
   const [uploadGroups, setUploadGroups] = useState<string[]>(["all_users"]);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [docSearch, setDocSearch] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
   const { startPolling } = useTaskPolling({
-    token: auth.token,
+    token,
     onSuccess: (response) => {
       notify(extractResultMessage(response, "인덱싱 완료!"));
       onRefresh();
@@ -65,7 +69,7 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
         "/documents/upload-and-index",
         {
           method: "POST",
-          token: auth.token,
+          token,
           body: formData,
           errorMessage: "업로드 실패",
         },
@@ -97,7 +101,7 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
         "/documents/index-github-repo",
         {
           method: "POST",
-          token: auth.token,
+          token,
           json: { repo_url: repoUrl },
           errorMessage: "레포 인덱싱 실패",
         },
@@ -117,7 +121,7 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
     try {
       await apiRequest("/documents", {
         method: "DELETE",
-        token: auth.token,
+        token,
         json: { doc_id_or_prefix: docId },
         errorMessage: "삭제 실패",
       });
@@ -129,13 +133,36 @@ export default function ContextPanel({ auth, documents, onRefresh, onSelectDoc }
     }
   }
 
+  const filteredDocs = useMemo(() => {
+    const query = docSearch.trim().toLowerCase();
+    if (!query) return documents;
+    return documents.filter((doc) =>
+      doc.name.toLowerCase().includes(query) || doc.id.toLowerCase().includes(query),
+    );
+  }, [documents, docSearch]);
+
   return (
     <aside className="context-panel">
       <section>
-        <h3>지식 소스</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3>지식 소스</h3>
+          <button className="ghost" onClick={onRefresh}>
+            새로고침
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: "-0.4rem", marginBottom: "0.5rem" }}>
+          총 {documents.length}건 · {filteredDocs.length}건 표시 중
+        </p>
+        <input
+          type="search"
+          placeholder="이름 또는 ID로 필터링"
+          value={docSearch}
+          onChange={(e) => setDocSearch(e.target.value)}
+          style={{ marginBottom: "0.75rem" }}
+        />
         <div className="doc-list">
-          {documents.length === 0 && <p className="muted">인덱싱된 문서가 없습니다.</p>}
-          {documents.map((doc) => (
+          {filteredDocs.length === 0 && <p className="muted">조건에 맞는 문서가 없습니다.</p>}
+          {filteredDocs.map((doc) => (
             <div key={doc.id} className="doc-item">
               <button onClick={() => onSelectDoc(doc.id)}>{doc.name}</button>
               <button className="ghost" onClick={() => handleDelete(doc.id)}>

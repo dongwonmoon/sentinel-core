@@ -2,14 +2,18 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../lib/apiClient";
 import { Notification } from "../hooks/useNotifications";
 import { notify } from "./NotificationHost";
+import { useAuth } from "../providers/AuthProvider";
+import Modal from "./Modal";
 
 type Props = {
-  token: string;
   notifications: Notification[];
   onClose: () => void;
 };
 
-export default function NotificationList({ token, notifications, onClose }: Props) {
+export default function NotificationList({ notifications, onClose }: Props) {
+  const { user } = useAuth();
+  if (!user) return null;
+
   const queryClient = useQueryClient();
 
   // 1. useMutation으로 "읽음 처리" API (POST /notifications/{id}/read) 호출
@@ -17,7 +21,7 @@ export default function NotificationList({ token, notifications, onClose }: Prop
     mutationFn: (notificationId: number) =>
       apiRequest(`/notifications/${notificationId}/read`, {
         method: "POST",
-        token,
+        token: user.token,
         errorMessage: "알림 처리에 실패했습니다.",
       }),
     onSuccess: () => {
@@ -29,43 +33,69 @@ export default function NotificationList({ token, notifications, onClose }: Prop
     },
   });
 
-  return (
-    // P1.3에서 만든 ProfileModal과 동일한 스타일 재사용
-    <div className="auth-wrapper" style={{ zIndex: 10 }} onClick={onClose}>
-      <div
-        className="auth-card" //
-        style={{ width: "min(500px, 90vw)", maxHeight: "70vh", display: "flex", flexDirection: "column" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2>알림</h2>
-          <button type="button" className="ghost" onClick={onClose}>
-            닫기
-          </button>
-        </div>
+  const isEmpty = notifications.length === 0;
 
-        {/* [신규] 👈 알림 목록 (doc-list 스타일 재사용) */}
-        <div className="doc-list" style={{ flex: 1, maxHeight: "50vh", overflowY: "auto", paddingRight: '0.5rem' }}>
-          {notifications.length === 0 ? (
-            <p className="muted">새로운 알림이 없습니다.</p>
-          ) : (
-            notifications.map((notif) => (
-              // doc-item 스타일 재사용
-              <div key={notif.notification_id} className="doc-item">
-                <p style={{ flex: 1, margin: 0, fontSize: '0.9rem' }}>{notif.message}</p>
-                <button
-                  className="ghost"
-                  onClick={() => mutate(notif.notification_id)}
-                  disabled={isPending}
-                  title="읽음 처리"
-                >
-                  X
-                </button>
-              </div>
-            ))
-          )}
+  return (
+    <Modal onClose={onClose} maxHeight="60vh">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h2 style={{ marginBottom: 0 }}>알림</h2>
+          <small className="muted">
+            {isEmpty ? "새로운 알림이 없습니다." : `${notifications.length}개의 읽지 않은 알림`}
+          </small>
         </div>
+        <button type="button" className="ghost" onClick={onClose}>
+          닫기
+        </button>
       </div>
-    </div>
+
+      <div
+        className="doc-list"
+        style={{
+          flex: 1,
+          maxHeight: "45vh",
+          overflowY: "auto",
+          paddingRight: "0.5rem",
+          marginTop: "1rem",
+        }}
+      >
+        {isEmpty ? (
+          <p className="muted">나중에 다시 확인해 주세요.</p>
+        ) : (
+          notifications.map((notif) => (
+            <div key={notif.notification_id} className="doc-item" style={{ alignItems: "flex-start" }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>{notif.message}</p>
+                <small className="muted">{formatRelativeTime(notif.created_at)}</small>
+              </div>
+              <button
+                className="ghost"
+                onClick={() => mutate(notif.notification_id)}
+                disabled={isPending}
+                title="읽음 처리"
+              >
+                완료
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </Modal>
   );
+}
+
+function formatRelativeTime(value: string) {
+  const date = new Date(value);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  if (Number.isNaN(diffMs) || diffMs < 0) {
+    return "방금";
+  }
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "방금";
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  return `${days}일 전`;
 }

@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { z } from "zod";
 import { getApiBaseUrl } from "../hooks/useEnvironment";
-
-export type AuthResult = { token: string; username: string };
+import { AuthResult } from "../providers/AuthProvider";
 
 const loginSchema = z.object({
   username: z.string().min(2),
