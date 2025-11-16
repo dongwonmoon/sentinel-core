@@ -1,8 +1,153 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { notify } from "./NotificationHost";
 import { apiRequest } from "../lib/apiClient";
-import { TaskStatusResponse, useTaskPolling } from "../hooks/useTaskPolling";
 import { useAuth } from "../providers/AuthProvider";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { SessionAttachment } from "../hooks/useChatSession";
+import Modal from "./Modal";
+import { PromotionApprovalRequest } from "../schemas";
+import PanelTabs from "./PanelTabs";
+
+// (거버넌스) 관리자 승인 모달
+function ApprovalModal({
+  attachment,
+  onClose,
+  onSubmit,
+}: {
+  attachment: SessionAttachment;
+  onClose: () => void;
+  onSubmit: (data: PromotionApprovalRequest) => void;
+}) {
+  // 사용자가 제안한 ID를 기본값으로 사용
+  const defaultKbId = attachment.pending_review_metadata?.suggested_kb_doc_id || 
+                      (attachment.filename.split(".").slice(0, -1).join(".") || attachment.filename);
+                      
+  const [kbDocId, setKbDocId] = useState(defaultKbId);
+  const [permissionGroups, setPermissionGroups] = useState("all_users");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!kbDocId.trim() || !permissionGroups.trim()) {
+      notify("KB 문서 ID와 권한 그룹을 입력해야 합니다.");
+      return;
+    }
+    onSubmit({
+      kb_doc_id: kbDocId.trim(),
+      permission_groups: permissionGroups.split(",").map(g => g.trim()),
+    });
+  };
+  
+  return (
+    <Modal onClose={onClose} width="min(600px, 90vw)">
+      <form onSubmit={handleSubmit} className="panel-form" style={{ gap: '1rem' }}>
+        <h3>지식 베이스(KB) 승인</h3>
+        <p className="muted">
+          <b>{attachment.filename}</b> (요청자: {attachment.user_id})
+        </p>
+        <p className="muted" style={{ borderLeft: '3px solid var(--color-primary)', paddingLeft: '1rem' }}>
+          <b>요청자 메모:</b> {attachment.pending_review_metadata?.note_to_admin || "(없음)"}
+        </p>
+        <label>
+          영구 KB 문서 ID (필수)
+          <input
+            value={kbDocId}
+            onChange={(e) => setKbDocId(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          권한 그룹 (필수, 쉼표로 구분)
+          <input
+            value={permissionGroups}
+            onChange={(e) => setPermissionGroups(e.target.value)}
+            placeholder="all_users, it, hr"
+            required
+          />
+        </label>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+          <button type="button" className="ghost" onClick={onClose}>취소</button>
+          <button type="submit" className="primary">최종 승인 및 발행</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// (거버넌스) 관리자용 승인 패널
+function AdminReviewPanel({ token }: { token: string }) {
+  const queryClient = useQueryClient();
+  const [selectedAttachment, setSelectedAttachment] = useState<SessionAttachment | null>(null);
+
+  // 1. 승인 대기 목록 조회
+  const { data: pendingAttachments, isLoading } = useQuery({
+    queryKey: ["pendingAttachments"],
+    queryFn: () => 
+      apiRequest<SessionAttachment[]>("/admin/pending_attachments", { token }),
+    enabled: !!token,
+  });
+  
+  // 2. 승인/반려 Mutation
+  const { mutate: approveMutate, isPending: isApproving } = useMutation({
+    mutationFn: ({ attachmentId, data }: { attachmentId: number, data: PromotionApprovalRequest }) =>
+      apiRequest(`/admin/approve_promotion/${attachmentId}`, {
+        method: 'POST',
+        token,
+        json: data,
+        errorMessage: "승인 실패"
+      }),
+    onSuccess: (data: { task_id: string }) => {
+      notify("KB 승인 완료. 영구 지식 복사 작업을 시작합니다.");
+      queryClient.invalidateQueries({ queryKey: ["pendingAttachments"] });
+      // (선택적) 이 task_id로 폴링하여 'promoted' 상태 확인
+      setSelectedAttachment(null);
+    },
+    onError: (err) => notify(err.message),
+  });
+  
+  const { mutate: rejectMutate, isPending: isRejecting } = useMutation({
+     mutationFn: (attachmentId: number) =>
+      apiRequest(`/admin/reject_promotion/${attachmentId}`, {
+        method: 'POST',
+        token,
+        errorMessage: "반려 실패"
+      }),
+    onSuccess: () => {
+      notify("요청이 반려되었습니다.");
+      queryClient.invalidateQueries({ queryKey: ["pendingAttachments"] });
+    },
+    onError: (err) => notify(err.message),
+  });
+  
+  const isPending = isApproving || isRejecting;
+
+  return (
+    <section>
+      <h4>KB 등록 승인 대기</h4>
+      {isLoading && <p className="muted">로딩 중...</p>}
+      <div className="doc-list">
+        {!isLoading && pendingAttachments?.length === 0 && <p className="muted">승인 대기 중인 문서가 없습니다.</p>}
+        {pendingAttachments?.map(att => (
+          <div key={att.attachment_id} className="doc-item">
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: 0, fontSize: '0.9rem' }}>{att.filename}</p>
+              <small className="muted">요청 ID: {att.attachment_id}</small>
+            </div>
+            <button className="ghost" onClick={() => rejectMutate(att.attachment_id)} disabled={isPending}>반려</button>
+            <button onClick={() => setSelectedAttachment(att)} disabled={isPending}>검토/승인</button>
+          </div>
+        ))}
+      </div>
+      
+      {selectedAttachment && (
+        <ApprovalModal 
+          attachment={selectedAttachment}
+          onClose={() => setSelectedAttachment(null)}
+          onSubmit={(data) => approveMutate({ attachmentId: selectedAttachment.attachment_id, data })}
+        />
+      )}
+    </section>
+  );
+}
 
 type Props = {
   documents: { id: string; name: string }[];
@@ -15,6 +160,9 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
   const token = user?.token;
   if (!token) return null;
 
+  const [docSearch, setDocSearch] = useState("");
+  const isAdmin = useMemo(() => user.permission_groups.includes("admin"), [user]);
+  const [activeTab, setActiveTab] = useState("kb_search");
   const [uploadLoading, setUploadLoading] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoLoading, setRepoLoading] = useState(false);
@@ -141,130 +289,60 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
     );
   }, [documents, docSearch]);
 
+  const TABS = [
+    { id: "kb_search", label: "KB 검색/필터" },
+  ];
+  if (isAdmin) {
+    TABS.push({ id: "kb_admin", label: "KB 승인 관리" });
+  }
+
   return (
     <aside className="context-panel">
-      <section>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3>지식 소스</h3>
-          <button className="ghost" onClick={onRefresh}>
-            새로고침
-          </button>
-        </div>
-        <p className="muted" style={{ marginTop: "-0.4rem", marginBottom: "0.5rem" }}>
-          총 {documents.length}건 · {filteredDocs.length}건 표시 중
-        </p>
-        <input
-          type="search"
-          placeholder="이름 또는 ID로 필터링"
-          value={docSearch}
-          onChange={(e) => setDocSearch(e.target.value)}
-          style={{ marginBottom: "0.75rem" }}
+      {/* [신규] 탭 UI */}
+      {TABS.length > 1 && (
+        <PanelTabs 
+          tabs={TABS} 
+          activeId={activeTab} 
+          onChange={setActiveTab} 
         />
-        <div className="doc-list">
-          {filteredDocs.length === 0 && <p className="muted">조건에 맞는 문서가 없습니다.</p>}
-          {filteredDocs.map((doc) => (
-            <div key={doc.id} className="doc-item">
-              <button onClick={() => onSelectDoc(doc.id)}>{doc.name}</button>
-              <button className="ghost" onClick={() => handleDelete(doc.id)}>
-                삭제
-              </button>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <h4>파일/디렉토리 업로드</h4>
-        <form className="panel-form" onSubmit={handleUpload}>
-          <label>
-            1. 지식 소스 이름 (필수)
-            <input
-              type="text"
-              value={knowledgeName}
-              onChange={(e) => setKnowledgeName(e.target.value)}
-              placeholder="e.g., 나의 파이썬 프로젝트"
-              required
-            />
-          </label>
-          <label>
-            2. 적용할 권한 그룹
-            <input
-              value={uploadGroups.join(",")}
-              onChange={(e) =>
-                setUploadGroups(e.target.value.split(",").map((g) => g.trim()))
-              }
-              placeholder="all_users, it"
-            />
-          </label>
-          <label>
-            3. 파일 또는 디렉토리 선택
-          </label>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={(e) => setSelectedFiles(e.target.files)}
-            multiple
-            style={{ display: "none" }}
-            accept=".txt,.md,.pdf,.py,.js,.ts,.java,.go,.c,.cpp,.h" // 👈 파일 제한
-          />
-          <input
-            type="file"
-            ref={dirInputRef}
-            onChange={(e) => setSelectedFiles(e.target.files)}
-            // @ts-ignore
-            webkitdirectory="true"
-            style={{ display: "none" }}
-          />
-          <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
-            <button
-              type="button"
-              className="ghost" //
-              onClick={() => fileInputRef.current?.click()}
-              style={{ flex: 1 }}
-            >
-              파일 선택
-            </button>
-            <button
-              type="button"
-              className="ghost" //
-              onClick={() => dirInputRef.current?.click()}
-              style={{ flex: 1 }}
-            >
-              디렉토리 선택
+      )}
+      <div className={`fade-in-out ${activeTab === "kb_search" ? "active" : ""}`}>
+        <section>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3>영구 지식 베이스(KB)</h3>
+            <button className="ghost" onClick={onRefresh}>
+              새로고침
             </button>
           </div>
-          {/* 선택된 파일 정보 표시 */}
-          {selectedFiles && selectedFiles.length > 0 && (
-            <p className="muted" style={{ fontSize: '0.8rem', margin: '0.5rem 0 0 0' }}>
-              {selectedFiles.length}개 파일/디렉토리 선택됨
-            </p>
-          )}
-
-          {/* 최종 제출 버튼 */}
-          <button
-            type="submit"
-            disabled={uploadLoading || !selectedFiles?.length || !knowledgeName.trim()}
-          >
-            {uploadLoading ? "업로드 중..." : "업로드 시작"}
-          </button>
-        </form>
-      </section>
-
-      <section>
-        <h4>GitHub 인덱싱</h4>
-        <form className="panel-form" onSubmit={handleRepo}>
+          <p className="muted" style={{ marginTop: "-0.4rem", marginBottom: "0.5rem" }}>
+            총 {documents.length}건 · {filteredDocs.length}건 표시 중
+          </p>
           <input
-            type="url"
-            placeholder="https://github.com/org/repo"
-            value={repoUrl}
-            onChange={(e) => setRepoUrl(e.target.value)}
-            required
+            type="search"
+            placeholder="이름 또는 ID로 필터링"
+            value={docSearch}
+            onChange={(e) => setDocSearch(e.target.value)}
+            style={{ marginBottom: "0.75rem" }}
           />
-          <button type="submit" disabled={repoLoading}>
-            {repoLoading ? "요청 중..." : "시작"}
-          </button>
-        </form>
-      </section>
+          <div className="doc-list">
+            {filteredDocs.length === 0 && <p className="muted">조건에 맞는 문서가 없습니다.</p>}
+            {filteredDocs.map((doc) => (
+              <div key={doc.id} className="doc-item">
+                <button onClick={() => onSelectDoc(doc.id)}>{doc.name}</button>
+                <button className="ghost" onClick={() => handleDelete(doc.id)}>
+                  삭제
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      {isAdmin && (
+        <div className={`fade-in-out ${activeTab === "kb_admin" ? "active" : ""}`}>
+          <AdminReviewPanel token={token} />
+        </div>
+      )}      
     </aside>
   );
 }

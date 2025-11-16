@@ -18,6 +18,7 @@ from sqlalchemy import text
 from .. import dependencies, schemas
 from ...core.logger import get_logger
 from ...db import models
+from ...worker import tasks
 
 logger = get_logger(__name__)
 
@@ -85,9 +86,7 @@ async def update_user_permissions(
     )
     old_user = result.fetchone()
     if not old_user:
-        logger.warning(
-            f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다."
-        )
+        logger.warning(f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
@@ -158,9 +157,7 @@ async def create_registered_tool(
         )
         return new_tool
     except sa.exc.IntegrityError:
-        logger.warning(
-            f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다."
-        )
+        logger.warning(f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다.")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A tool with this name already exists.",
@@ -298,27 +295,118 @@ async def get_agent_audit_logs(
     return logs
 
 
-@router.put(
-    "/documents/{doc_id}/permissions", summary="문서 권한 업데이트 (미구현)"
+@router.get(
+    "/pending_attachments",
+    response_model=List[schemas.SessionAttachment],
+    summary="[신규] (거버넌스) KB 승인 대기 중인 첨부파일 목록 조회",
 )
-async def update_document_permissions(
-    doc_id: str,
-    body: schemas.UpdatePermissionsRequest,
+async def get_pending_attachments(
     admin_user: schemas.UserInDB = Depends(dependencies.get_admin_user),
-    session: AsyncSession = Depends(dependencies.get_db_session),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """(Admin) '영구 지식(KB)'로 승인 대기 중인 파일 목록을 조회합니다."""
+    stmt = (
+        select(models.SessionAttachment)
+        .where(models.SessionAttachment.status == "pending_review")
+        .order_by(models.SessionAttachment.created_at.asc())
+    )
+    result = await db_session.execute(stmt)
+    return result.scalars().all()
+
+
+@router.post(
+    "/approve_promotion/{attachment_id}",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="(거버넌스) KB 승인 요청 '승인'",
+)
+async def approve_document_promotion(
+    attachment_id: int,
+    body: schemas.PromotionApprovalRequest,
+    admin_user: schemas.UserInDB = Depends(dependencies.get_admin_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
 ):
     """
-    특정 문서(doc_id)의 접근 권한 그룹을 업데이트합니다.
-    (참고: 이 기능은 현재 구현되지 않았습니다.)
+    (Admin) 사용자의 '지식 승격' 요청을 승인합니다.
+    승인 시, '임시' 청크/임베딩을 '영구' KB로 복사하는 Celery 태스크가 호출됩니다.
     """
-    logger.warning(
-        f"미구현된 API 'update_document_permissions'가 호출되었습니다 (doc_id: {doc_id})."
+    attachment = await db_session.get(models.SessionAttachment, attachment_id)
+    if not attachment or attachment.status != "pending_review":
+        raise HTTPException(
+            status_code=404, detail="Attachment not found or not pending review."
+        )
+
+    # 관리자가 확정한 ID가 영구 KB에 이미 있는지 재확인
+    existing_doc = await db_session.get(models.Document, body.kb_doc_id)
+    if existing_doc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A document with the final ID '{body.kb_doc_id}' already exists.",
+        )
+
+    # 1. Celery 태스크 호출 (무거운 DB 복사 작업 위임)
+    task = tasks.promote_to_kb.delay(
+        attachment_id=attachment_id,
+        kb_doc_id=body.kb_doc_id,
+        permission_groups=body.permission_groups,
+        admin_user_id=admin_user.user_id,
     )
-    # TODO: 사용자 권한 업데이트와 유사하게 문서의 `permission_groups`를 업데이트하는 로직 구현
-    # 1. `documents` 테이블에서 `doc_id`로 기존 문서 조회
-    # 2. `UPDATE` 쿼리로 `permission_groups` 필드 변경
-    # 3. `_log_admin_action`을 호출하여 감사 로그 기록
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="This feature is not yet implemented.",
+
+    # 2. 원본 첨부파일 상태를 'promoting'(승격 진행 중)으로 변경
+    attachment.status = "promoting"
+    db_session.add(attachment)
+
+    # 3. 감사 로그 기록
+    await _log_admin_action(
+        session=db_session,
+        actor_user_id=admin_user.user_id,
+        action="approve_promotion",
+        target_id=f"attachment_id:{attachment_id}",
+        new_value={
+            "approved_kb_doc_id": body.kb_doc_id,
+            "permission_groups": body.permission_groups,
+        },
     )
+
+    await db_session.commit()
+
+    return {"status": "promoting", "task_id": task.id}
+
+
+@router.post(
+    "/reject_promotion/{attachment_id}",
+    status_code=status.HTTP_200_OK,
+    summary="(거버넌스) KB 승인 요청 '반려'",
+)
+async def reject_document_promotion(
+    attachment_id: int,
+    admin_user: schemas.UserInDB = Depends(dependencies.get_admin_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """(Admin) 사용자의 '지식 승격' 요청을 반려합니다."""
+    attachment = await db_session.get(models.SessionAttachment, attachment_id)
+    if not attachment or attachment.status != "pending_review":
+        raise HTTPException(
+            status_code=404, detail="Attachment not found or not pending review."
+        )
+
+    # 1. 상태를 'rejected'(반려됨)로 변경
+    attachment.status = "rejected"
+    db_session.add(attachment)
+
+    # 2. 감사 로그 기록
+    await _log_admin_action(
+        session=db_session,
+        actor_user_id=admin_user.user_id,
+        action="reject_promotion",
+        target_id=f"attachment_id:{attachment_id}",
+    )
+
+    await db_session.commit()
+
+    # 3. 반려 사유를 요청자에게 알림
+    tasks.notify_user.delay(
+        user_id=attachment.user_id,
+        message=f"요청하신 문서 '{attachment.file_name}'의 KB 등록이 관리자에 의해 반려되었습니다.",
+    )
+
+    return {"status": "rejected"}

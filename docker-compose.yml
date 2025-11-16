@@ -30,6 +30,7 @@ services:
     volumes:
       - .:/app
       - ./config.yml:/app/config.yml:ro
+      - ./session_uploads:/app/session_uploads
     depends_on:
       - db
       - redis
@@ -54,6 +55,7 @@ services:
     volumes:
       - .:/app
       - ./config.yml:/app/config.yml:ro
+      - ./session_uploads:/app/session_uploads
     depends_on:
       - db
       - redis

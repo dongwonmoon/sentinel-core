@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, useEffect } from "react";
 import { notify } from "../components/NotificationHost";
 import { apiRequest } from "../lib/apiClient";
 import { getApiBaseUrl } from "./useEnvironment";
+import { useTaskPolling, TaskStatusResponse } from "./useTaskPolling";
 
 const API_BASE = getApiBaseUrl();
 
@@ -35,15 +36,28 @@ type PendingRequest = {
   session_id: string | null;
 };
 
+export type SessionAttachment = {
+  attachment_id: number;
+  filename: string;
+  status: "indexing" | "temporary" | "pending_review" | "promoted" | "failed";
+  task_id: string; // 폴링을 위한 ID
+  pending_review_metadata?: {
+    suggested_kb_doc_id: string;
+    note_to_admin: string;
+  };
+};
+
 export function useChatSession(token: string, docFilter: string | null, sessionId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
+  const [attachments, setAttachments] = useState<SessionAttachment[]>([]);
 
   useEffect(() => {
     // sessionId가 없으면(예: '새 대화' 직후) 비우고 종료합니다.
     if (!sessionId) {
       setMessages([]);
+      setAttachments([]);
       sourceRef.current?.close();
       setLoading(false);
       return;
@@ -51,6 +65,7 @@ export function useChatSession(token: string, docFilter: string | null, sessionI
 
     // sessionId가 있으면, 히스토리 로딩을 시작합니다.
     setLoading(true);
+    setAttachments([]);
     sourceRef.current?.close(); // 진행 중인 스트리밍 중단
 
     const fetchHistory = async () => {
@@ -80,8 +95,123 @@ export function useChatSession(token: string, docFilter: string | null, sessionI
     };
 
     fetchHistory();
+
     
   }, [sessionId, token]);
+
+  const { startPolling } = useTaskPolling({
+    token,
+    buildStatusPath: (taskId) => `/documents/task-status/${taskId}`,
+    onSuccess: (response: TaskStatusResponse, taskId: string) => {
+      notify(extractResultMessage(response, "파일 인덱싱 완료!"));
+      // 인덱싱 성공 시, attachment 상태를 'temporary'(임시 RAG 준비 완료)로 변경
+      setAttachments((prev) =>
+        prev.map((att) =>
+          att.task_id === taskId ? { ...att, status: "temporary" } : att
+        )
+      );
+    },
+    onFailure: (response: TaskStatusResponse, taskId: string) => {
+      notify(extractResultMessage(response, "파일 인덱싱 실패"));
+      setAttachments((prev) =>
+        prev.map((att) =>
+          att.task_id === taskId ? { ...att, status: "failed" } : att
+        )
+      );
+    },
+    onError: (err: Error, taskId: string) => {
+      notify(err.message);
+      setAttachments((prev) =>
+        prev.map((att) =>
+          att.task_id === taskId ? { ...att, status: "failed" } : att
+        )
+      );
+    },
+  });
+
+  const handleAttachFile = useCallback(
+    async (file: File) => {
+      if (!sessionId) {
+        notify("새 대화를 시작한 후 파일을 첨부해주세요.");
+        return;
+      }
+      
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // (로컬에 임시로 'indexing' 상태 추가)
+      const tempTaskId = `temp-id-${Date.now()}`;
+      const tempAttachment: SessionAttachment = {
+        attachment_id: 0, // 아직 모름
+        filename: file.name,
+        status: "indexing",
+        task_id: tempTaskId,
+      };
+      setAttachments((prev) => [...prev, tempAttachment]);
+
+      try {
+        const result = await apiRequest<{ 
+          task_id: string; 
+          attachment_id: number; 
+        }>(
+          `/chat/sessions/${sessionId}/attach`,
+          {
+            method: "POST",
+            token,
+            body: formData,
+            errorMessage: "파일 첨부 실패",
+          }
+        );
+
+        // (API 응답 후, 실제 task_id로 업데이트)
+        setAttachments((prev) =>
+          prev.map((att) =>
+            att.task_id === tempTaskId
+              ? { ...att, task_id: result.task_id, attachment_id: result.attachment_id }
+              : att
+          )
+        );
+        
+        // [핵심] 실제 Polling 시작
+        startPolling(result.task_id);
+
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "파일 업로드 오류");
+        // (실패 시 임시 attachment 제거)
+        setAttachments((prev) => prev.filter((att) => att.task_id !== tempTaskId));
+      }
+    },
+    [sessionId, token, startPolling]
+  );
+
+  const handleRequestPromotion = useCallback(
+    async (attachmentId: number, metadata: { suggested_kb_doc_id: string; note_to_admin: string }) => {
+      if (!token) return;
+      
+      try {
+        await apiRequest(
+          `/documents/request_promotion/${attachmentId}`,
+          {
+            method: "POST",
+            token,
+            json: metadata,
+            errorMessage: "승격 요청 실패"
+          }
+        );
+        notify("관리자에게 KB 등록 요청을 보냈습니다.");
+        // (상태를 'pending_review'로 변경)
+        setAttachments((prev) =>
+          prev.map((att) =>
+            att.attachment_id === attachmentId
+              ? { ...att, status: "pending_review", pending_review_metadata: metadata }
+              : att
+          )
+        );
+      } catch (err) {
+         notify(err instanceof Error ? err.message : "요청 중 오류 발생");
+      }
+    }, [token]
+  );
 
   const sendMessage = useCallback(
     async (payload: { query: string; docFilter?: string }) => {
@@ -122,7 +252,7 @@ export function useChatSession(token: string, docFilter: string | null, sessionI
     [token, sessionId, docFilter, messages],
   );
 
-  return { messages, sendMessage, loading };
+  return { messages, sendMessage, loading, attachments, handleAttachFile, handleRequestPromotion, };;
 }
 
 function updateAssistant(
@@ -314,4 +444,14 @@ async function streamQuery(
     // @ts-ignore
     handlers.ref.current = null;
   }
+}
+
+function extractResultMessage(
+  response: TaskStatusResponse,
+  fallback: string,
+) {
+  if (!response.result) return fallback;
+  if (typeof response.result === "string") return response.result;
+  // @ts-ignore
+  return response.result.message ?? fallback;
 }

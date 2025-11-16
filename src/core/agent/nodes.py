@@ -50,9 +50,7 @@ class AgentNodes:
         self.reranker = reranker
         self.tools = tools
 
-        self.AsyncSessionLocal = getattr(
-            vector_store, "AsyncSessionLocal", None
-        )
+        self.AsyncSessionLocal = getattr(vector_store, "AsyncSessionLocal", None)
         if not self.AsyncSessionLocal:
             logger.warning("AgentNodes: DB 세션 팩토리를 찾을 수 없습니다.")
 
@@ -144,22 +142,16 @@ class AgentNodes:
                     ]  # (임계값 0.8)
 
                 if not relevant_turns:
-                    logger.debug(
-                        "하이브리드 컨텍스트(C): 관련 '사건 기억' 없음."
-                    )
+                    logger.debug("하이브리드 컨텍스트(C): 관련 '사건 기억' 없음.")
                     return ""
 
                 logger.debug(
                     f"하이브리드 컨텍스트(C): 관련 '사건 기억' {len(relevant_turns)}개 인출."
                 )
-                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(
-                    relevant_turns
-                )
+                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(relevant_turns)
 
             except Exception as e:
-                logger.warning(
-                    f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True
-                )
+                logger.warning(f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True)
                 return ""
 
         async def get_available_dynamic_tools() -> List[DynamicTool]:
@@ -180,9 +172,7 @@ class AgentNodes:
                     )
                     tools = [DynamicTool(**row._asdict()) for row in result]
 
-                logger.debug(
-                    f"하이브리드 컨텍스트(D): 동적 도구 {len(tools)}개 로드."
-                )
+                logger.debug(f"하이브리드 컨텍스트(D): 동적 도구 {len(tools)}개 로드.")
                 return tools
             except Exception as e:
                 logger.warning(
@@ -272,9 +262,7 @@ class AgentNodes:
         )
 
         # 'fast' LLM을 호출하여 신속하게 도구를 결정합니다.
-        response = await self.llm_fast.invoke(
-            [HumanMessage(content=prompt)], config={}
-        )
+        response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
         response_content = response.content.strip()
 
         try:
@@ -285,9 +273,7 @@ class AgentNodes:
                 tool_args = tool_call_data.get("args")
 
                 # 실제 사용 가능한 tool인지
-                tool_to_call = next(
-                    (t for t in dynamic_tools if t.name == tool_name)
-                )
+                tool_to_call = next((t for t in dynamic_tools if t.name == tool_name))
 
                 if tool_to_call and isinstance(tool_args, dict):
                     logger.info(f"라우터 결정 -> 동적 도구: {tool_name}")
@@ -307,22 +293,16 @@ class AgentNodes:
             # 기존 정적 도구 포맷인지 확인 ([LLM, TOOL])
             logger.debug("라우터 응답이 정적 도구 포맷입니다.")
             decision_text = response_content.replace("[", "").replace("]", "")
-            llm_part, tool_part = [
-                part.strip() for part in decision_text.split(",")
-            ]
+            llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
 
-            chosen_llm = (
-                "powerful" if "powerful" in llm_part.lower() else "fast"
-            )
+            chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
             tool_choice = (
                 tool_part
                 if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]
                 else "None"
             )
 
-            logger.info(
-                f"라우터 결정 -> LLM: {chosen_llm}, 정적 도구: {tool_choice}"
-            )
+            logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 정적 도구: {tool_choice}")
             return {
                 "chosen_llm": chosen_llm,
                 "tool_choice": tool_choice,
@@ -402,54 +382,82 @@ class AgentNodes:
 
     async def run_rag_tool(self, state: AgentState) -> Dict[str, Any]:
         """
-        [노드 2-A: RAG] 'RAG'(Retrieval-Augmented Generation) 도구를 실행합니다.
-        벡터 저장소에서 관련 문서를 검색(Retrieve)하고, 리랭커로 순위를 재조정(Rerank)합니다.
-
-        Returns:
-            Dict[str, Any]: 검색 및 리랭킹된 문서('rag_chunks')를 포함한 상태 딕셔너리.
-                           실패 시 'failed_tools'에 'RAG'를 추가하여 반환합니다.
+        [수정] (거버넌스 - 듀얼 RAG)
+        'Global KB'(영구 지식)와 'Session KB'(임시 지식)를
+        `asyncio.gather`를 통해 *동시에* 검색하고,
+        `reranker`로 결과를 병합하여 최상의 컨텍스트를 생성합니다.
         """
-        logger.debug("--- [Agent Node: RAG Tool] ---")
-        # 1. Retrieve: 벡터 저장소에서 문서를 검색합니다.
-        # 사용자의 권한 그룹(permission_groups)과 문서 필터(doc_ids_filter)를 고려하여
-        # 접근 제어와 필터링을 수행합니다.
-        retrieved = await self.vector_store.search(
-            query=state["question"],
-            allowed_groups=state["permission_groups"],
-            k=10,  # 리랭킹의 효율을 위해 충분히 많은 수(10개)를 우선 검색합니다.
-            doc_ids_filter=state.get("doc_ids_filter"),
-        )
+        logger.debug("--- [Agent Node: 듀얼 RAG Tool] ---")
 
-        # 검색 결과가 없으면, 'failed_tools' 상태에 'RAG'를 추가하고 종료합니다.
-        # 이 상태는 그래프의 조건부 엣지에서 재시도(retry) 로직을 트리거하는 데 사용됩니다.
-        if not retrieved:
-            logger.info(
-                "RAG 검색 결과 없음 - 질문='%s'", state["question"][:80]
+        question = state["question"]
+        query_embedding = self.vector_store.embedding_model.embed_query(question)
+
+        # 두 개의 검색 작업을 병렬로 실행
+        try:
+            results = await asyncio.gather(
+                # 1. Global KB 검색 (영구, 권한 필터링)
+                self.vector_store.search(
+                    query_embedding=query_embedding,
+                    allowed_groups=state["permission_groups"],
+                    k=5,  # 하드코딩. 우선 보류
+                    doc_ids_filter=state.get("doc_ids_filter"),
+                ),
+                # 2. Session KB 검색 (임시, 세션 필터링)
+                self.vector_store.search_session_attachments(
+                    query_embedding=query_embedding,
+                    session_id=state["session_id"],
+                    k=5,  # 하드코딩. 우선 보류
+                ),
             )
+            global_docs = results[0]
+            session_docs = results[1]
+
+            logger.debug(
+                f"듀얼 RAG 검색 완료: Global {len(global_docs)}건, Session {len(session_docs)}건"
+            )
+
+            # 3. 모든 문서를 하나로 병합
+            all_retrieved_docs: List[Dict[str, Any]] = global_docs + session_docs
+
+            if not all_retrieved_docs:
+                logger.info("듀얼 RAG 검색 결과 없음 - 질문='%s'", question[:80])
+                failed = state.get("failed_tools", [])
+                failed.append("RAG")
+                return {"tool_outputs": {"rag_chunks": []}, "failed_tools": failed}
+
+            # 4. Reranker로 최종 컨텍스트 선별
+            reranked_docs = self.reranker.rerank(question, all_retrieved_docs)
+
+            # 최종적으로 LLM에 전달할 상위 K개의 문서를 선택 (state['top_k'] 사용)
+            final_docs = reranked_docs[: state["top_k"]]
+            logger.info(
+                "듀얼 RAG 리랭킹 완료 - 원본 %d건, 리랭크 후 최종 %d건",
+                len(all_retrieved_docs),
+                len(final_docs),
+            )
+
+            # 5. 상태(State)에 저장
+            # (Reranker가 score를 반환한다고 가정, BaseReranker 수정 필요 시 수정)
+            # (Reranker가 튜플 (doc, score)를 반환하는 경우)
+            # dict_docs = [
+            #     {
+            #         "page_content": doc.page_content,
+            #         "metadata": doc.metadata,
+            #         "score": score,
+            #     }
+            #     for doc, score in final_docs
+            # ]
+
+            # (Reranker가 Dict 리스트를 반환하는 경우 - NoOpReranker 기준)
+            dict_docs = final_docs
+
+            return {"tool_outputs": {"rag_chunks": dict_docs}}
+
+        except Exception as e:
+            logger.error(f"듀얼 RAG 실행 중 오류 발생: {e}", exc_info=True)
             failed = state.get("failed_tools", [])
             failed.append("RAG")
             return {"tool_outputs": {"rag_chunks": []}, "failed_tools": failed}
-
-        # 2. Rerank: 검색된 문서를 리랭커를 사용해 질문과의 관련도 순으로 재정렬합니다.
-        reranked = self.reranker.rerank(state["question"], retrieved)
-        # 최종적으로 LLM에 전달할 상위 K개의 문서를 선택합니다.
-        final_docs = reranked[: state["top_k"]]
-        logger.info(
-            "RAG 검색 완료 - 원본 %d건, 리랭크 후 %d건",
-            len(retrieved),
-            len(final_docs),
-        )
-
-        # 다음 노드에서 사용할 수 있도록 문서 내용을 딕셔너리 리스트로 변환하여 상태에 추가합니다.
-        dict_docs = [
-            {
-                "page_content": doc.page_content,
-                "metadata": doc.metadata,
-                "score": score,
-            }
-            for doc, score in final_docs
-        ]
-        return {"tool_outputs": {"rag_chunks": dict_docs}}
 
     async def run_web_search_tool(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -458,21 +466,15 @@ class AgentNodes:
         logger.debug("--- [Agent Node: WebSearch Tool] ---")
         tool = self.tools.get("duckduckgo_search")
         if not tool:
-            logger.warning(
-                "웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음"
-            )
+            logger.warning("웹 검색 도구 미설정 - duckduckgo_search 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "search_result": "웹 검색 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}
             }
 
         result = await tool.arun(tool_input=state["question"])
         return {"tool_outputs": {"search_result": result}}
 
-    async def run_code_execution_tool(
-        self, state: AgentState
-    ) -> Dict[str, Any]:
+    async def run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
         """
         [노드 2-C: 코드 실행] 'CodeExecution' 도구를 실행합니다.
         - 1단계: RAG를 통해 질문과 관련된 내부 코드 컨텍스트를 검색합니다.
@@ -482,13 +484,9 @@ class AgentNodes:
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
-            logger.warning(
-                "코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음"
-            )
+            logger.warning("코드 실행 도구 미설정 - python_repl 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "code_result": "코드 실행 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
         # 1. RAG로 사내 코드 컨텍스트 검색 (선택적 단계)
@@ -505,15 +503,11 @@ class AgentNodes:
                 timeout=5.0,  # 컨텍스트 검색이 너무 오래 걸리지 않도록 타임아웃 설정
             )
             context_str = (
-                "\n\n---\n\n".join(
-                    [doc.page_content for doc, score in code_docs]
-                )
+                "\n\n---\n\n".join([doc.page_content for doc, score in code_docs])
                 if code_docs
                 else "No internal code context found."
             )
-            logger.info(
-                "CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs)
-            )
+            logger.info("CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs))
         except Exception as e:
             logger.warning("CodeExecution: RAG 컨텍스트 검색 실패: %s", e)
             context_str = "Error fetching code context."
@@ -529,17 +523,13 @@ class AgentNodes:
         code_to_run = (
             response.content.strip().replace("```python", "").replace("```", "")
         )
-        logger.info(
-            "코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run)
-        )
+        logger.info("코드 실행 프롬프트 생성 완료 - 길이 %d자", len(code_to_run))
 
         # 3. 생성된 코드 실행
         # `tool.run`은 동기 함수이므로, `asyncio.to_thread`를 사용해 별도 스레드에서 실행하여
         # 이벤트 루프가 블로킹되는 것을 방지합니다.
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
-        logger.debug(
-            "코드 실행 결과 수신 - result='%s...'", str(code_result)[:120]
-        )
+        logger.debug("코드 실행 결과 수신 - result='%s...'", str(code_result)[:120])
 
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result)
@@ -571,26 +561,28 @@ class AgentNodes:
         tool_outputs = state.get("tool_outputs", {})
 
         if tool_choice == "RAG" and tool_outputs.get("rag_chunks"):
-            docs = [
-                chunk["page_content"] for chunk in tool_outputs["rag_chunks"]
-            ]
+            docs = [chunk["page_content"] for chunk in tool_outputs["rag_chunks"]]
             context_str = "[사내 RAG 정보]\n" + "\n\n---\n\n".join(docs)
         elif tool_choice == "WebSearch" and tool_outputs.get("search_result"):
             context_str = f"[웹 검색 결과]\n{tool_outputs['search_result']}"
         elif tool_choice == "CodeExecution" and tool_outputs.get("code_result"):
             code_input = state.get("code_input", "")
             code_result = tool_outputs.get("code_result", "")
-            context_str = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
-        elif tool_choice == "DynamicTool" and tool_outputs.get(
-            "dynamic_tool_result"
-        ):
+            context_str = (
+                f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            )
+        elif tool_choice == "DynamicTool" and tool_outputs.get("dynamic_tool_result"):
             tool_name = state.get("dynamic_tool_to_call").name
             tool_result = tool_outputs.get("dynamic_tool_result")
             context_str = f"[실행된 동적 도구: {tool_name}]\n{tool_result}"
         elif tool_choice == "None":
-            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            context_str = (
+                "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            )
         else:
-            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            context_str = (
+                "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            )
 
         # 최종 프롬프트를 조립합니다.
         hybrid_context = state.get("hybrid_context", "")
@@ -651,5 +643,7 @@ class AgentNodes:
             # 가드레일 실행 중 타임아웃 또는 기타 오류 발생 시, 안전을 위해 답변을 차단하고
             # 오류 메시지를 포함한 안전한 답변으로 대체합니다.
             logger.error("Guardrail: 가드레일 실행 중 오류 발생: %s", e)
-            safe_answer = f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            safe_answer = (
+                f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            )
             return {"answer": safe_answer}

@@ -159,6 +159,34 @@ class DeleteDocumentRequest(BaseModel):
     doc_id_or_prefix: str = Field(..., description="삭제할 doc_id 또는 접두사")
 
 
+class PromotionRequest(BaseModel):
+    suggested_kb_doc_id: str = Field(
+        ...,
+        description="영구 지식 베이스(KB)에 등록되길 희망하는 이름 (예: hr-policy-v3)",
+    )
+    note_to_admin: Optional[str] = Field(
+        None, description="관리자에게 남기는 메모 (예: v2를 대체합니다)"
+    )
+
+
+class SessionAttachment(BaseModel):
+    """
+    (거버넌스) GET /admin/pending_attachments 등
+    API 응답용 '임시 첨부파일' 스키마
+    """
+
+    attachment_id: int
+    session_id: str
+    user_id: Optional[int]
+    file_name: str
+    file_path: str
+    status: str
+    pending_review_metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class DocumentResponse(BaseModel):
     """GET /documents 응답 스키마의 각 항목"""
 
@@ -168,6 +196,7 @@ class DocumentResponse(BaseModel):
     permission_groups: List[str]
     created_at: datetime
     last_verified_at: datetime
+    promoted_from_attachment_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
@@ -205,6 +234,15 @@ class UpdatePermissionsRequest(BaseModel):
     """PUT /admin/users/{user_id}/permissions 요청 스키마"""
 
     groups: List[str] = Field(..., description="새롭게 할당할 권한 그룹 목록")
+
+
+class PromotionApprovalRequest(BaseModel):
+    kb_doc_id: str = Field(
+        ..., description="영구 KB에 저장될 최종 확정 ID (관리자가 수정 가능)"
+    )
+    permission_groups: List[str] = Field(
+        ..., description="이 문서에 적용할 최종 권한 그룹"
+    )
 
 
 class ToolBase(BaseModel):

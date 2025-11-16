@@ -18,9 +18,12 @@ from croniter import croniter
 from datetime import datetime
 from git import Repo
 from git.exc import GitCommandError
+import json
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from contextlib import contextmanager
 
 from langchain_community.document_loaders import (
@@ -37,6 +40,7 @@ from ..components.llms.base import BaseLLM
 from ..core import factories, prompts
 from ..core.logger import get_logger
 from .celery_app import celery_app
+from ..db import models as db_models
 
 logger = get_logger(__name__)
 
@@ -66,9 +70,7 @@ def get_sync_db_session():
         yield session
         session.commit()
     except Exception as e:
-        logger.error(
-            f"동기 DB 세션 중 오류 발생! 롤백됩니다. {e}", exc_info=True
-        )
+        logger.error(f"동기 DB 세션 중 오류 발생! 롤백됩니다. {e}", exc_info=True)
         session.rollback()
         raise
     finally:
@@ -85,14 +87,10 @@ async def _generate_hypothetical_question(chunk_text: str, llm: BaseLLM) -> str:
             llm.invoke([HumanMessage(content=prompt)], config={}), timeout=15.0
         )
         question = response.content.strip()
-        logger.debug(
-            f"HyDE 생성: 원본 '%.20s...' -> 질문 '%s'", chunk_text, question
-        )
+        logger.debug(f"HyDE 생성: 원본 '%.20s...' -> 질문 '%s'", chunk_text, question)
         return question
     except asyncio.TimeoutError:
-        logger.warning(
-            f"HyDE: 가상 질문 생성 시간 초과 (원본: '%.20s...')", chunk_text
-        )
+        logger.warning(f"HyDE: 가상 질문 생성 시간 초과 (원본: '%.20s...')", chunk_text)
         return chunk_text  # 실패 시 원본 텍스트 반환
     except Exception as e:
         logger.warning(
@@ -109,9 +107,7 @@ async def _load_and_split_documents(
 ) -> List[Document]:
     """[비동기 헬퍼] 파일을 종류에 맞는 로더와 스플리터로 분할하고, 각 청크에 대한 가상 질문을 생성합니다."""
     file_ext = os.path.splitext(file_name)[1].lower()
-    logger.debug(
-        f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'"
-    )
+    logger.debug(f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'")
 
     # 파일 확장자에 따라 적절한 로더 선택
     if file_ext == ".pdf":
@@ -138,9 +134,7 @@ async def _load_and_split_documents(
             )
 
     split_chunks = splitter.split_documents(docs)
-    logger.debug(
-        f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다."
-    )
+    logger.debug(f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다.")
 
     # 각 청크에 대해 가상 질문을 비동기적으로 생성 (HyDE)
     tasks = [
@@ -181,6 +175,109 @@ def _initialize_components_for_task() -> Dict[str, Any]:
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+def process_session_attachment_indexing(
+    self, attachment_id: int, file_path: str, file_name: str  # API가 저장한 파일 경로
+):
+    """
+    사용자가 세션에 첨부한 '임시' 파일을 인덱싱하여
+    'session_attachment_chunks' 테이블에 저장합니다.
+    """
+    task_id = self.request.id
+    logger.info(
+        f"--- [Celery Task ID: {task_id}] '임시 파일' 인덱싱 시작 (Attachment ID: {attachment_id}, 파일: {file_name}) ---"
+    )
+
+    try:
+        components = _initialize_components_for_task()
+        vector_store = components["vector_store"]
+        fast_llm = components["fast_llm"]
+        text_splitter_default = components["text_splitter_default"]
+
+        # 파일 로드 및 분할
+        # (HyDE 가상 질문 생성 로직이 _load_and_split_documents에 포함되어 있음)
+        split_chunks = asyncio.run(
+            _load_and_split_documents(
+                file_path,
+                file_name,
+                text_splitter_default,
+                fast_llm,
+            )
+        )
+
+        if not split_chunks:
+            logger.warning(f"'{file_name}' 처리 후 인덱싱할 청크가 없습니다.")
+            # (DB 상태 업데이트 로직이 필요하면 여기에 추가, 예: 'failed')
+            return {"status": "warning", "message": "No content to index."}
+
+        # 임베딩 생성 (vector_store.embedding_model 사용)
+        embedding_source_texts = [
+            chunk.metadata.get("embedding_source_text", chunk.page_content)
+            for chunk in split_chunks
+        ]
+        chunk_embeddings = vector_store.embedding_model.embed_documents(
+            embedding_source_texts
+        )
+
+        # 'session_attachment_chunks' 테이블에 저장
+        chunks_to_store = [
+            {
+                "attachment_id": attachment_id,
+                "chunk_text": chunk.page_content,
+                "embedding": str(embedding_vector),  # pgvector는 문자열 리스트로 받음
+                "extra_metadata": json.dumps(chunk.metadata),
+            }
+            for chunk, embedding_vector in zip(split_chunks, chunk_embeddings)
+        ]
+
+        # PgVectorStore의 세션 팩토리를 사용하여 DB 작업 수행
+        async def save_chunks_to_db():
+            if not hasattr(vector_store, "AsyncSessionLocal"):
+                raise TypeError("Vector store is missing AsyncSessionLocal")
+
+            async with vector_store.AsyncSessionLocal() as session:
+                async with session.begin():
+                    # 청크 삽입
+                    stmt_chunks_insert = text(
+                        """
+                        INSERT INTO session_attachment_chunks 
+                        (attachment_id, chunk_text, embedding, extra_metadata)
+                        VALUES (:attachment_id, :chunk_text, :embedding, :extra_metadata)
+                        """
+                    )
+                    await session.execute(stmt_chunks_insert, chunks_to_store)
+
+                    # 부모 Attachment 상태를 'temporary'(준비 완료)로 업데이트
+                    stmt_update_status = text(
+                        """
+                        UPDATE session_attachments
+                        SET status = 'temporary'
+                        WHERE attachment_id = :attachment_id
+                        """
+                    )
+                    await session.execute(
+                        stmt_update_status, {"attachment_id": attachment_id}
+                    )
+
+        asyncio.run(save_chunks_to_db())
+
+        success_message = (
+            f"'{file_name}' 임시 인덱싱 완료. {len(chunks_to_store)}개 청크 저장됨."
+        )
+        logger.info(
+            f"--- [Celery Task ID: {task_id}] 임시 인덱싱 성공: {success_message} ---"
+        )
+        return {"status": "success", "message": success_message}
+
+    except Exception as e:
+        logger.error(
+            f"--- [Celery Task ID: {task_id}] '{file_name}' 임시 인덱싱 중 심각한 오류 발생: {e} ---",
+            exc_info=True,
+        )
+        # (실패 시 DB 상태를 'failed'로 업데이트하는 로직 추가 권장)
+        raise self.retry(exc=e)
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def process_document_indexing(
     self,
     file_content: bytes,
@@ -217,10 +314,7 @@ def process_document_indexing(
                     for file in files:
                         # 숨김 파일 및 __pycache__ 디렉토리 건너뛰기
                         if (
-                            any(
-                                part.startswith(".")
-                                for part in root.split(os.sep)
-                            )
+                            any(part.startswith(".") for part in root.split(os.sep))
                             or "__pycache__" in root
                         ):
                             continue
@@ -312,9 +406,7 @@ def process_document_indexing(
             }
             for chunk in all_chunks_to_index
         ]
-        asyncio.run(
-            vector_store.upsert_documents(documents_data=documents_data)
-        )
+        asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
 
         success_message = f"'{file_name}' 처리 완료. {total_files_processed}개 파일에서 {len(all_chunks_to_index)}개 청크를 인덱싱했습니다."
         logger.info(
@@ -353,9 +445,7 @@ def process_github_repo_indexing(
         total_files_processed = 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            logger.info(
-                f"'{repo_name}' 클론을 시작합니다. 대상 디렉토리: {temp_dir}"
-            )
+            logger.info(f"'{repo_name}' 클론을 시작합니다. 대상 디렉토리: {temp_dir}")
             Repo.clone_from(
                 repo_url, temp_dir, depth=50
             )  # 최근 50개 커밋만 가져와서 클론 속도 향상
@@ -415,9 +505,7 @@ def process_github_repo_indexing(
             }
             for chunk in all_chunks_to_index
         ]
-        asyncio.run(
-            vector_store.upsert_documents(documents_data=documents_data)
-        )
+        asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
 
         success_message = f"'{repo_name}' 처리 완료. {total_files_processed}개 파일에서 {len(all_chunks_to_index)}개 청크를 인덱싱했습니다."
         logger.info(
@@ -466,9 +554,7 @@ def check_stale_documents(days_old: int = 180):
         with get_sync_db_session() as session:
             stale_documents = session.execute(find_stale_stmt).fetchall()
             if not stale_documents:
-                logger.info(
-                    "[Beat Task] 오래된 문서가 없습니다. 작업을 종료합니다."
-                )
+                logger.info("[Beat Task] 오래된 문서가 없습니다. 작업을 종료합니다.")
                 return "No stale documents found."
 
             logger.warning(
@@ -488,26 +574,18 @@ def check_stale_documents(days_old: int = 180):
                 )
 
             if notifications_to_create:
-                session.execute(
-                    insert_notification_stmt, notifications_to_create
-                )
+                session.execute(insert_notification_stmt, notifications_to_create)
                 notifications_sent = len(notifications_to_create)
     except Exception as e:
-        logger.error(
-            f"[Beat Task] 오래된 문서 스캔 중 오류 발생: {e}", exc_info=True
-        )
+        logger.error(f"[Beat Task] 오래된 문서 스캔 중 오류 발생: {e}", exc_info=True)
         return f"Error during stale document check: {e}"
 
-    logger.info(
-        f"[Beat Task] 스캔 완료. {notifications_sent}개의 알림을 생성했습니다."
-    )
+    logger.info(f"[Beat Task] 스캔 완료. {notifications_sent}개의 알림을 생성했습니다.")
     return f"Scan complete. Sent {notifications_sent} notifications."
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
-def run_scheduled_github_summary(
-    self, task_id: int, user_id: int, repo_url: str
-):
+def run_scheduled_github_summary(self, task_id: int, user_id: int, repo_url: str):
     """[User Task] 특정 GitHub 리포지토리의 최근 24시간 커밋을 요약하고 사용자에게 알림을 보냅니다."""
     task_id_celery = self.request.id
     logger.info(
@@ -530,9 +608,7 @@ def run_scheduled_github_summary(
                 [f"- {c.message.splitlines()[0]}" for c in commits]
             )
 
-        prompt = prompts.SUMMARY_PROMPT_TEMPLATE.format(
-            commit_messages=commit_messages
-        )
+        prompt = prompts.SUMMARY_PROMPT_TEMPLATE.format(commit_messages=commit_messages)
         response = asyncio.run(
             fast_llm.invoke([HumanMessage(content=prompt)], config={})
         )
@@ -619,3 +695,154 @@ def check_and_run_user_tasks():
             f"[Beat Task] 스캔 완료. {tasks_dispatched}개의 사용자 작업을 큐에 발행했습니다."
         )
     return f"Scan complete. Dispatched {tasks_dispatched} user tasks."
+
+
+# --- 알림 및 승격 태스크 ---
+
+
+@celery_app.task(max_retries=3)
+def notify_admins(message: str):
+    """(거버넌스) 'admin' 권한 그룹을 가진 모든 사용자에게 알림을 보냅니다."""
+    logger.info(f"관리자 알림 태스크 시작: {message}")
+    with get_sync_db_session() as session:
+        # 1. 'admin' 그룹 사용자 ID 조회
+        admin_users = session.execute(
+            text("SELECT user_id FROM users WHERE 'admin' = ANY(permission_groups)")
+        ).fetchall()
+
+        if not admin_users:
+            logger.warning("알림을 보낼 관리자가 없습니다.")
+            return
+
+        notifications = [
+            {"user_id": user.user_id, "message": message} for user in admin_users
+        ]
+
+        # 2. 알림 삽입
+        session.execute(
+            text(
+                "INSERT INTO user_notifications (user_id, message) VALUES (:user_id, :message)"
+            ),
+            notifications,
+        )
+    logger.info(f"{len(notifications)}명의 관리자에게 알림을 보냈습니다.")
+
+
+@celery_app.task(max_retries=3)
+def notify_user(user_id: int, message: str):
+    """(거버넌스) 특정 사용자에게 알림을 보냅니다."""
+    logger.info(f"사용자 {user_id} 알림 태스크 시작: {message}")
+    with get_sync_db_session() as session:
+        session.execute(
+            text(
+                "INSERT INTO user_notifications (user_id, message) VALUES (:user_id, :message)"
+            ),
+            [{"user_id": user_id, "message": message}],
+        )
+    logger.info(f"사용자 {user_id}에게 알림을 보냈습니다.")
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=120)
+def promote_to_kb(
+    self,
+    attachment_id: int,
+    kb_doc_id: str,
+    permission_groups: List[str],
+    admin_user_id: int,
+):
+    """
+    (거버넌스) '승인'된 임시 파일을 '영구 지식 베이스(KB)'로 복사(승격)합니다.
+    재-임베딩 없이 DB 대 DB로 데이터를 고속 복사합니다.
+    """
+    task_id = self.request.id
+    logger.info(
+        f"--- [Celery Task ID: {task_id}] '지식 승격' 시작 (Attachment ID: {attachment_id} -> KB ID: {kb_doc_id}) ---"
+    )
+
+    components = _initialize_components_for_task()
+    vector_store = components["vector_store"]
+
+    async def do_promotion():
+        if not hasattr(vector_store, "AsyncSessionLocal"):
+            raise TypeError("Vector store is missing AsyncSessionLocal")
+
+        async with vector_store.AsyncSessionLocal() as session:
+            async with session.begin():
+                # 1. 원본 첨부파일 정보 조회 (메타데이터 복사용)
+                att_result = await session.execute(
+                    select(db_models.SessionAttachment).where(
+                        db_models.SessionAttachment.attachment_id == attachment_id
+                    )
+                )
+                attachment = att_result.scalar_one_or_none()
+                if not attachment:
+                    raise ValueError(
+                        f"Attachment ID {attachment_id}를 찾을 수 없습니다."
+                    )
+
+                # 2. 'documents' (영구) 테이블에 새 레코드 생성
+                new_document = db_models.Document(
+                    doc_id=kb_doc_id,
+                    source_type="promoted-file",
+                    owner_user_id=admin_user_id,  # 소유권은 '승인한 관리자'
+                    permission_groups=permission_groups,
+                    extra_metadata={
+                        "original_filename": attachment.file_name,
+                        "original_uploader_user_id": attachment.user_id,
+                        "promotion_admin_user_id": admin_user_id,
+                        "promotion_date": datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                    },
+                    promoted_from_attachment_id=attachment_id,  # 이력 추적
+                )
+                session.add(new_document)
+
+                # 3. 'session_attachment_chunks' -> 'document_chunks'로 고속 복사
+                # (재-임베딩이 필요 없는 순수 SQL 작업)
+                stmt_copy_chunks = text(
+                    f"""
+                    INSERT INTO document_chunks (doc_id, chunk_text, embedding, extra_metadata)
+                    SELECT 
+                        :kb_doc_id,  -- 새 영구 ID
+                        chunk_text,
+                        embedding,
+                        extra_metadata
+                    FROM 
+                        session_attachment_chunks
+                    WHERE 
+                        attachment_id = :attachment_id
+                    """
+                )
+                result = await session.execute(
+                    stmt_copy_chunks,
+                    {"kb_doc_id": kb_doc_id, "attachment_id": attachment_id},
+                )
+                copied_chunks_count = result.rowcount
+
+                # 4. 원본 첨부파일 상태를 'promoted'로 업데이트
+                attachment.status = "promoted"
+                session.add(attachment)
+
+                return copied_chunks_count
+
+    try:
+        copied_count = asyncio.run(do_promotion())
+
+        success_message = f"'{kb_doc_id}'(으)로 지식 승격 완료. {copied_count}개 청크가 영구 KB로 복사되었습니다."
+        logger.info(
+            f"--- [Celery Task ID: {task_id}] '지식 승격' 성공: {success_message} ---"
+        )
+        return {
+            "status": "success",
+            "message": success_message,
+            "copied_chunks": copied_count,
+        }
+
+    except Exception as e:
+        logger.error(
+            f"--- [Celery Task ID: {task_id}] '지식 승격' 중 심각한 오류 발생: {e} ---",
+            exc_info=True,
+        )
+        # (실패 시 DB 상태를 'failed'로 업데이트하는 로직 추가 권장)
+        raise self.retry(exc=e)

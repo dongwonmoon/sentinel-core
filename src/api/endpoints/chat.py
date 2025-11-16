@@ -10,8 +10,19 @@ API 라우터: 채팅 (Chat)
 """
 import json
 import redis.asyncio as aioredis
+import aiofiles
+import os
+from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status, HTTPException
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    status,
+    HTTPException,
+    File,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +30,16 @@ from .. import dependencies, schemas
 from ...core.agent import Agent
 from ...core.logger import get_logger
 from ...services import chat_service
+from ...worker import tasks
+from ...db import models
 
 # 'chat' 기능에 대한 API 라우터를 생성합니다.
 # 이 라우터에 등록된 모든 엔드포인트는 '/api/chat' 접두사를 갖게 됩니다.
 router = APIRouter()
 logger = get_logger(__name__)
+
+SESSION_UPLOAD_DIR = Path("/app/session_uploads")
+SESSION_UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 @router.post("/query", summary="에이전트에게 실시간 쿼리")
@@ -83,9 +99,7 @@ async def query_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to build agent context.",
         )
-    logger.debug(
-        f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료."
-    )
+    logger.debug(f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료.")
 
     # `chat_service.stream_agent_response`는 비동기 제너레이터(Async Generator)를 반환합니다.
     # FastAPI는 이 제너레이터로부터 생성되는 데이터 조각들을 클라이언트로 스트리밍합니다.
@@ -131,13 +145,9 @@ async def update_session_context(
         context["doc_ids_filter"] = body.doc_ids_filter
 
         # Redis에 (24시간 만료) 저장합니다.
-        await redis.set(
-            session_key, json.dumps(context), ex=86400
-        )  # 24h expiry
+        await redis.set(session_key, json.dumps(context), ex=86400)  # 24h expiry
 
-        logger.debug(
-            f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}"
-        )
+        logger.debug(f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}")
         return None  # 204 응답
 
     except Exception as e:
@@ -148,6 +158,83 @@ async def update_session_context(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update session context.",
         )
+
+
+@router.post(
+    "/sessions/{session_id}/attach",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="[신규] (거버넌스) 세션에 임시 파일 첨부 및 인덱싱",
+)
+async def attach_file_to_session(
+    session_id: str,
+    file: UploadFile = File(...),
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+    _=Depends(dependencies.enforce_document_rate_limit),  # 문서 업로드 제한 재사용
+):
+    """
+    파일을 현재 세션에 '임시'로 첨부합니다.
+    파일은 즉시 저장되고, 백그라운드에서 인덱싱 작업이 시작됩니다.
+    사용자는 task_id로 진행 상태를 폴링할 수 있습니다.
+    """
+    logger.info(
+        f"세션 '{session_id}'에 파일 첨부 시도 (사용자: {current_user.username}, 파일: {file.filename})"
+    )
+
+    # 파일 시스템에 파일 저장 (S3 등을 사용할 수도 있음)
+    # (보안: session_id와 user_id를 경로에 포함시켜 격리)
+    safe_dir = SESSION_UPLOAD_DIR / str(current_user.user_id) / session_id
+    safe_dir.mkdir(parents=True, exist_ok=True)
+
+    # (보안: 파일 이름 충돌 및 경로 탐색 방지)
+    safe_filename = Path(file.filename).name
+    file_path = safe_dir / safe_filename
+
+    try:
+        # 비동기 파일 쓰기
+        async with aiofiles.open(file_path, "wb") as f:
+            while content := await file.read(1024 * 1024):  # 1MB씩 읽기
+                await f.write(content)
+        logger.debug(f"파일 임시 저장 완료: {file_path}")
+    except Exception as e:
+        logger.error(f"파일 저장 실패: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="File save failed.")
+
+    # DB에 'session_attachments' 레코드 생성
+    try:
+        new_attachment = models.SessionAttachment(
+            session_id=session_id,
+            user_id=current_user.user_id,
+            file_name=file.filename,
+            file_path=str(file_path),  # 워커가 참조할 경로
+            status="indexing",
+        )
+        db_session.add(new_attachment)
+        await db_session.commit()
+        await db_session.refresh(new_attachment)
+
+        attachment_id = new_attachment.attachment_id
+        logger.debug(f"DB 레코드 생성 완료 (Attachment ID: {attachment_id})")
+
+    except Exception as e:
+        logger.error(f"첨부파일 DB 레코드 생성 실패: {e}", exc_info=True)
+        # (롤백은 get_db_session 의존성이 처리)
+        raise HTTPException(status_code=500, detail="DB record creation failed.")
+
+    # Celery 워커에 인덱싱 작업 위임
+    task = tasks.process_session_attachment_indexing.delay(
+        attachment_id=attachment_id, file_path=str(file_path), file_name=file.filename
+    )
+
+    logger.info(f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다.")
+
+    return {
+        "status": "success",
+        "task_id": task.id,
+        "attachment_id": attachment_id,
+        "filename": file.filename,
+        "message": f"'{file.filename}' 파일이 첨부되었으며, 백그라운드 인덱싱이 시작되었습니다.",
+    }
 
 
 @router.get(
@@ -169,9 +256,7 @@ async def get_chat_sessions(
     Returns:
         schemas.ChatSessionListResponse: 채팅 세션 목록을 포함하는 응답.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다.")
     sessions = await chat_service.fetch_user_sessions(
         db_session=session, user_id=current_user.user_id
     )
@@ -235,15 +320,11 @@ async def get_user_profile(
     Returns:
         schemas.UserProfileResponse: 사용자의 프로필 텍스트를 포함하는 응답.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다.")
     profile_text = await chat_service.fetch_user_profile(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다.")
     return schemas.UserProfileResponse(profile_text=profile_text)
 
 
@@ -265,9 +346,7 @@ async def update_user_profile(
         current_user: 인증된 사용자 정보.
         session: DB 작업을 위한 비동기 세션.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다.")
     await chat_service.upsert_user_profile(
         db_session=session,
         user_id=current_user.user_id,

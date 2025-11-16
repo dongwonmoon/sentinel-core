@@ -16,7 +16,7 @@ SQLAlchemy의 선언적 매핑(Declarative Mapping)을 사용하여 각 클래�
 """
 
 import datetime
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -156,12 +156,23 @@ class Document(Base):
         onupdate=func.current_timestamp(),
         comment="문서의 유효성이 마지막으로 확인된 시간",
     )
+    # (거버넌스) 어떤 임시 파일로부터 승격되었는지 추적
+    promoted_from_attachment_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("session_attachments.attachment_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="이 지식이 승격된 원본 임시 첨부파일 ID",
+    )
 
     # Document -> User (N:1 관계)
     owner: Mapped["User"] = relationship("User", back_populates="documents")
     # Document -> DocumentChunk (1:N 관계)
     chunks: Mapped[List["DocumentChunk"]] = relationship(
         "DocumentChunk", back_populates="document", cascade="all, delete-orphan"
+    )
+    # Document -> SessionAttachment (1:1 관계)
+    promoted_from: Mapped["SessionAttachment"] = relationship(
+        "SessionAttachment", foreign_keys=[promoted_from_attachment_id]
     )
 
     def __repr__(self) -> str:
@@ -172,6 +183,7 @@ class DocumentChunk(Base):
     """
     'document_chunks' 테이블에 매핑되는 ORM 모델.
     분할된 문서의 각 조각(청크)과 그에 해당하는 임베딩 벡터를 저장합니다.
+    (거버넌스) '영구 지식 베이스(KB)'의 청크만 저장합니다.
     """
 
     __tablename__ = "document_chunks"
@@ -202,14 +214,10 @@ class DocumentChunk(Base):
     )
 
     # DocumentChunk -> Document (N:1 관계)
-    document: Mapped["Document"] = relationship(
-        "Document", back_populates="chunks"
-    )
+    document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 
     def __repr__(self) -> str:
-        return (
-            f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
-        )
+        return f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
 
 
 class ChatHistory(Base):
@@ -243,9 +251,7 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="메시지 내용"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -335,9 +341,7 @@ class AgentAuditLog(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
-        )
+        return f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
 
 
 class ChatTurnMemory(Base):
@@ -383,7 +387,104 @@ class ChatTurnMemory(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        return (
+            f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        )
+
+
+# --- (거버넌스) 임시 세션 첨부파일 모델 ---
+
+
+class SessionAttachment(Base):
+    """
+    'session_attachments' 테이블 (거버넌스 1단계)
+    사용자가 채팅 세션에 '임시'로 첨부한 파일을 관리합니다.
+    """
+
+    __tablename__ = "session_attachments"
+
+    attachment_id: Mapped[int] = mapped_column(
+        BIGINT, Identity(), primary_key=True, comment="첨부파일 고유 ID"
+    )
+    session_id: Mapped[str] = mapped_column(
+        Text, index=True, nullable=False, comment="이 파일이 첨부된 세션 ID"
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,  # 소유자가 탈퇴해도 파일은 남을 수 있음
+        comment="첨부한 사용자 ID",
+    )
+    file_name: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="원본 파일 이름"
+    )
+    file_path: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="저장된 경로 (예: S3 키 또는 로컬 경로)"
+    )
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        server_default="indexing",
+        comment="상태: indexing, temporary, pending_review, promoted, rejected, failed",
+    )
+    pending_review_metadata: Mapped[Optional[Dict[str, any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="승격 요청 시 사용자가 제출한 메타데이터 (대상 KB 이름, 권한 그룹 등)",
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.current_timestamp()
+    )
+
+    # 관계
+    user: Mapped["User"] = relationship()
+    chunks: Mapped[List["SessionAttachmentChunk"]] = relationship(
+        "SessionAttachmentChunk",
+        back_populates="attachment",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<SessionAttachment(id={self.attachment_id}, name='{self.file_name}')>"
+
+
+class SessionAttachmentChunk(Base):
+    """
+    'session_attachment_chunks' 벡터 테이블 (거버넌스 1단계)
+    '임시' 첨부파일의 청크와 임베딩을 저장합니다. (듀얼 RAG의 대상)
+    """
+
+    __tablename__ = "session_attachment_chunks"
+
+    chunk_id: Mapped[int] = mapped_column(
+        BIGINT, Identity(), primary_key=True, comment="임시 청크의 고유 ID"
+    )
+    attachment_id: Mapped[int] = mapped_column(
+        ForeignKey("session_attachments.attachment_id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        comment="부모 첨부파일의 ID",
+    )
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[List[float]] = mapped_column(
+        "embedding",
+        Text,
+        nullable=False,
+        comment="텍스트에 대한 벡터 임베딩 (pgvector 타입)",
+    )
+    extra_metadata: Mapped[Dict[str, any]] = mapped_column(
+        JSONB, nullable=True, comment="청크 관련 추가 메타데이터 (JSONB)"
+    )
+
+    # 관계
+    attachment: Mapped["SessionAttachment"] = relationship(
+        "SessionAttachment", back_populates="chunks"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        )
 
 
 class RegisteredTool(Base):

@@ -21,12 +21,17 @@ from fastapi import (
     Form,
 )
 from celery.result import AsyncResult
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+import sqlalchemy as sa
 
 from .. import dependencies, schemas
 from ...worker import tasks
 from ...worker.celery_app import celery_app
 from ...core.logger import get_logger
 from ...services import document_service
+from .admin import _log_admin_action
+from ...db import models
 
 # '/documents' 접두사를 가진 APIRouter를 생성합니다.
 # 모든 엔드포인트는 기본적으로 `get_current_user` 의존성을 통해 인증된 사용자만 접근 가능합니다.
@@ -66,9 +71,7 @@ async def upload_and_index_document(
     try:
         permission_groups = json.loads(permission_groups_json)
         if not isinstance(permission_groups, list):
-            raise ValueError(
-                "permission_groups는 반드시 리스트 형태여야 합니다."
-            )
+            raise ValueError("permission_groups는 반드시 리스트 형태여야 합니다.")
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning(
             f"잘못된 형식의 permission_groups_json 수신: {permission_groups_json}, 오류: {e}"
@@ -129,6 +132,82 @@ async def upload_and_index_document(
             status_code=500,
             detail=f"파일 업로드 처리 중 서버 오류가 발생했습니다: {e}",
         )
+
+
+@router.post(
+    "/request_promotion/{attachment_id}",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="(거버넌스) 임시 파일을 영구 지식으로 승격 요청",
+)
+async def request_document_promotion(
+    attachment_id: int,
+    body: schemas.PromotionRequest,
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """
+    사용자가 현재 세션에 첨부한 '임시' 파일(attachment)을
+    '영구 지식 베이스(KB)'로 등록해달라고 관리자에게 '승인 요청'을 보냅니다.
+    """
+    logger.info(
+        f"사용자 '{current_user.username}'가 첨부파일 ID {attachment_id}의 "
+        f"영구 지식 승격을 요청합니다. (희망 ID: {body.suggested_kb_doc_id})"
+    )
+
+    # 1. 첨부파일 조회 및 소유권 확인
+    attachment = await db_session.get(models.SessionAttachment, attachment_id)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+
+    if attachment.user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to promote this attachment."
+        )
+
+    if attachment.status not in ["temporary", "rejected"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot request promotion. File status is '{attachment.status}'.",
+        )
+
+    # 2. '영구 KB'에 동일한 ID가 있는지 사전 확인 (중복 방지)
+    # (관리자가 승인 시점에 또 확인하겠지만, 1차 방어)
+    existing_doc = await db_session.get(models.Document, body.suggested_kb_doc_id)
+    if existing_doc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A document with ID '{body.suggested_kb_doc_id}' already exists in the Knowledge Base.",
+        )
+
+    # 3. 상태를 'pending_review'로 업데이트하고, 요청 메타데이터 저장
+    try:
+        attachment.status = "pending_review"
+        attachment.pending_review_metadata = body.model_dump()
+        db_session.add(attachment)
+        await db_session.commit()
+    except Exception as e:
+        logger.error(f"승격 요청 상태 업데이트 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to update promotion request status."
+        )
+
+    # 4. 관리자 그룹에게 알림 (비동기)
+    try:
+        tasks.notify_admins.delay(
+            message=(
+                f"사용자 '{current_user.username}'님이 "
+                f"문서 '{attachment.file_name}'(희망 ID: {body.suggested_kb_doc_id})의 "
+                "지식 베이스(KB) 등록을 요청했습니다."
+            )
+        )
+    except Exception as e:
+        # 알림 실패가 주 로직을 중단시켜서는 안 됨
+        logger.error(f"관리자 알림 태스크 호출 실패: {e}", exc_info=True)
+
+    return {
+        "status": "pending_review",
+        "message": "문서 승격 요청이 관리자에게 성공적으로 제출되었습니다.",
+    }
 
 
 @router.post(
@@ -231,15 +310,21 @@ async def get_task_status(task_id: str):
     return {"task_id": task_id, "status": status, "result": result}
 
 
-@router.delete("", status_code=status.HTTP_200_OK, summary="인덱싱된 문서 삭제")
+@router.delete(
+    "",
+    status_code=status.HTTP_200_OK,
+    summary="인덱싱된 영구 문서 삭제 (감사 로그 추가)",
+)
 async def delete_indexed_document(
     body: schemas.DeleteDocumentRequest,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
-    db_session=Depends(dependencies.get_db_session),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),  # db_session 주입
 ):
     """
     ID 또는 접두사를 기준으로 인덱싱된 지식 소스(파일, ZIP, 레포)를 삭제합니다.
-    사용자는 자신이 소유한 문서만 삭제할 수 있습니다.
+    (거버넌스)
+    1. `document_service`를 통해 소유권(owner_user_id) 또는 관리자 권한을 확인합니다.
+    2. 삭제 성공 시 '감사 로그(admin_audit_log)'에 기록을 남깁니다.
     """
     doc_id_or_prefix = body.doc_id_or_prefix
     logger.info(
@@ -247,15 +332,33 @@ async def delete_indexed_document(
     )
 
     try:
-        deleted_count = await document_service.delete_documents_by_id_or_prefix(
+        # document_service를 통해 소유권/관리자 권한을 함께 확인하며 삭제
+        is_admin = "admin" in current_user.permission_groups
+        deleted_doc_ids = await document_service.delete_documents_by_id_or_prefix(
             db_session=db_session,
             doc_id_or_prefix=doc_id_or_prefix,
             user_id=current_user.user_id,
+            is_admin=is_admin,  # 관리자는 소유권 없이도 삭제 가능
         )
+
+        deleted_count = len(deleted_doc_ids)
+
         if deleted_count > 0:
             logger.info(
                 f"'{doc_id_or_prefix}'에 해당하는 문서 {deleted_count}개를 성공적으로 삭제했습니다."
             )
+
+            # (거버넌스) 감사 로그 기록
+            await _log_admin_action(
+                session=db_session,
+                actor_user_id=current_user.user_id,
+                action="delete_permanent_document",
+                target_id=f"doc_prefix:{doc_id_or_prefix}",
+                new_value={
+                    "deleted_docs": deleted_doc_ids
+                },  # 삭제된 실제 doc_id 목록 기록
+            )
+
             return {
                 "status": "success",
                 "message": f"'{doc_id_or_prefix}' 및 관련 데이터가 성공적으로 삭제되었습니다.",
@@ -263,19 +366,16 @@ async def delete_indexed_document(
             }
         else:
             logger.warning(
-                f"삭제할 문서를 찾지 못했습니다: '{doc_id_or_prefix}'. 이미 삭제되었거나 소유자가 아닐 수 있습니다."
+                f"삭제할 문서를 찾지 못했습니다: '{doc_id_or_prefix}'. 이미 삭제되었거나 권한이 없을 수 있습니다."
             )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="삭제할 문서를 찾을 수 없습니다. 이미 삭제되었거나 소유자가 아닐 수 있습니다.",
+                detail="삭제할 문서를 찾을 수 없습니다. 이미 삭제되었거나 권한이 없습니다.",
             )
     except HTTPException:
-        # 이미 처리된 HTTP 예외는 그대로 다시 발생시킵니다.
         raise
     except Exception as e:
-        logger.exception(
-            f"문서 삭제 중 예기치 않은 오류 발생: '{doc_id_or_prefix}'"
-        )
+        logger.exception(f"문서 삭제 중 예기치 않은 오류 발생: '{doc_id_or_prefix}'")
         raise HTTPException(
             status_code=500,
             detail=f"문서 삭제 중 서버 오류가 발생했습니다: {e}",

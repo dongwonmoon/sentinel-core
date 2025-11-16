@@ -5,7 +5,7 @@ import ContextPanel from "./ContextPanel";
 import SchedulerPanel from "./SchedulerPanel";
 import { useDocuments } from "../hooks/useDocuments";
 import { NotificationHost } from "./NotificationHost";
-import { useChatSession } from "../hooks/useChatSession";
+import { useChatSession, SessionAttachment } from "../hooks/useChatSession";
 import { useChatSessionsList } from "../hooks/useChatSessionsList";
 import { useAuth } from "../providers/AuthProvider";
 import PanelTabs from "./PanelTabs";
@@ -89,6 +89,9 @@ export default function ChatLayout() {
           messages={session?.messages ?? []}
           loading={session?.loading ?? false}
           sendMessage={session?.sendMessage}
+          attachments={session?.attachments ?? []}
+          handleAttachFile={session?.handleAttachFile}
+          handleRequestPromotion={session?.handleRequestPromotion}
         />
         <div 
           className="context-panel" // 바깥쪽 래퍼는 context-panel 스타일 재사용
