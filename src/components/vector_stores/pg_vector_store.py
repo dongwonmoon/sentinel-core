@@ -40,7 +40,9 @@ class PgVectorStore(BaseVectorStore):
         try:
             # SQLAlchemy를 사용하여 비동기 데이터베이스 엔진을 생성합니다.
             # 이 엔진은 커넥션 풀을 관리하며, DB와 비동기적으로 통신합니다.
-            self.engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+            self.engine = create_async_engine(
+                settings.DATABASE_URL, pool_pre_ping=True
+            )
 
             # 비동기 세션을 생성하기 위한 세션 팩토리(Session Factory)를 설정합니다.
             # `get_db_session` 의존성이나 백그라운드 작업에서 이 팩토리를 사용하여
@@ -63,7 +65,9 @@ class PgVectorStore(BaseVectorStore):
         """벡터 저장소 제공자 이름("pg_vector")을 반환합니다."""
         return self._provider
 
-    async def upsert_documents(self, documents_data: List[Dict[str, Any]]) -> None:
+    async def upsert_documents(
+        self, documents_data: List[Dict[str, Any]]
+    ) -> None:
         """
         문서와 그 청크들을 데이터베이스에 비동기적으로 추가하거나 업데이트(Upsert)합니다.
 
@@ -112,7 +116,9 @@ class PgVectorStore(BaseVectorStore):
                             last_verified_at = CURRENT_TIMESTAMP
                     """
                     )
-                    await session.execute(stmt_docs_upsert, list(doc_infos.values()))
+                    await session.execute(
+                        stmt_docs_upsert, list(doc_infos.values())
+                    )
                     logger.debug(
                         f"{len(doc_infos)}개의 레코드를 `documents` 테이블에 Upsert했습니다."
                     )
@@ -121,7 +127,9 @@ class PgVectorStore(BaseVectorStore):
                     stmt_chunks_delete = text(
                         "DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)"
                     )
-                    await session.execute(stmt_chunks_delete, {"doc_ids": doc_ids})
+                    await session.execute(
+                        stmt_chunks_delete, {"doc_ids": doc_ids}
+                    )
                     logger.debug(
                         f"문서 ID {doc_ids}에 해당하는 기존 청크들을 삭제했습니다."
                     )
@@ -231,7 +239,9 @@ class PgVectorStore(BaseVectorStore):
                 for row in result
             ]
 
-        logger.info(f"벡터 검색 완료. {len(search_results)}개의 결과를 찾았습니다.")
+        logger.info(
+            f"벡터 검색 완료. {len(search_results)}개의 결과를 찾았습니다."
+        )
         return search_results
 
     async def search_session_attachments(
@@ -316,7 +326,9 @@ class PgVectorStore(BaseVectorStore):
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():
-                stmt = text("DELETE FROM documents WHERE doc_id = ANY(:doc_ids)")
+                stmt = text(
+                    "DELETE FROM documents WHERE doc_id = ANY(:doc_ids)"
+                )
                 result = await session.execute(stmt, {"doc_ids": doc_ids})
                 deleted_count = result.rowcount
 

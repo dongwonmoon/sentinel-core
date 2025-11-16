@@ -29,6 +29,7 @@ from ..db import models
 
 logger = get_logger(__name__)
 
+# SSE 이벤트에서 'tool'로 간주할 노드 이름 목록
 TOOL_NODES = [
     "run_rag_tool",
     "run_web_search_tool",
@@ -48,31 +49,50 @@ async def build_stateful_agent_inputs(
     user_profile: str,
 ) -> Dict[str, Any]:
     """
-    서버 측(Redis)에 저장된 세션 컨텍스트를 로드하고,
-    DB에서 대화 기록을 가져와 완전한 AgentState 입력을 구성합니다.
+    에이전트(LangGraph) 실행에 필요한 모든 입력(AgentState)을 구성합니다.
+    서버 측(Redis)에 저장된 세션 컨텍스트를 로드하고, DB에서 대화 기록을 가져와
+    하나의 딕셔너리로 조합하여 반환합니다.
+
+    Args:
+        redis: Redis 클라이언트 인스턴스.
+        db_session: 데이터베이스 세션.
+        user_id: 현재 사용자 ID.
+        session_id: 현재 채팅 세션 ID.
+        query: 사용자의 현재 질문.
+        top_k: RAG에서 사용할 상위 K개 문서 수.
+        permission_groups: 사용자의 권한 그룹.
+        user_profile: 사용자의 프로필 정보.
+
+    Returns:
+        Dict[str, Any]: AgentState를 구성하는 데 사용될 완전한 입력 딕셔너리.
     """
     session_key = f"session_context:{session_id}"
 
-    # Redis에서 컨텍스트(RAG 필터 등) 로드
+    # Redis에서 현재 세션의 컨텍스트(예: RAG 문서 필터)를 로드합니다.
     doc_ids_filter = None
     try:
         context_raw = await redis.get(session_key)
         if context_raw:
             context = json.loads(context_raw)
             doc_ids_filter = context.get("doc_ids_filter")
-            logger.debug(f"세션 '{session_id}'의 컨텍스트를 Redis에서 로드했습니다.")
+            logger.debug(
+                f"세션 '{session_id}'의 컨텍스트를 Redis에서 로드했습니다."
+            )
     except Exception as e:
-        # 장애 시에도 서비스 지속
+        # Redis 장애가 발생하더라도 채팅 기능 자체는 계속 작동해야 하므로,
+        # 오류를 로깅만 하고 무시합니다.
         logger.warning(f"세션 '{session_id}'의 Redis 컨텍스트 로드 실패: {e}")
 
-    # DB에서 대화 기록 로드
+    # DB에서 이전 대화 기록을 로드합니다.
     chat_history_models = await fetch_chat_history(
         db_session=db_session, user_id=user_id, session_id=session_id
     )
     chat_history = [
-        {"role": msg.role, "content": msg.content} for msg in chat_history_models
+        {"role": msg.role, "content": msg.content}
+        for msg in chat_history_models
     ]
 
+    # 모든 정보를 종합하여 AgentState의 입력으로 사용될 딕셔너리를 구성합니다.
     inputs = {
         "question": query,
         "top_k": top_k,
@@ -116,20 +136,24 @@ async def stream_agent_response(
     final_state: Optional[Dict[str, Any]] = None
     stream_started = False
 
-    # 'tool_start' 이벤트가 발생하면, 'on_chat_model_stream'(토큰) 이벤트가
-    # 새 답변(AIMessage)을 생성하도록 강제하는 플래그.
+    # 도구 사용 후 생성되는 첫 번째 토큰에 'new_message: true' 플래그를 붙여주기 위한 상태 값.
+    # 프론트엔드는 이 플래그를 보고, 도구 사용 결과를 별도의 메시지 블록으로 렌더링할 수 있습니다.
     force_new_message_after_tool = False
 
     try:
-        logger.info(f"세션 '{session_id}'에 대한 에이전트 스트리밍을 시작합니다.")
+        logger.info(
+            f"세션 '{session_id}'에 대한 에이전트 스트리밍을 시작합니다."
+        )
         # 에이전트의 `stream_response` 메서드를 호출하여 이벤트 스트림을 받습니다.
         async for event in agent.stream_response(inputs):
             kind = event.get("event")
             if not stream_started:
-                logger.debug(f"세션 '{session_id}'의 첫 이벤트를 수신했습니다: {kind}")
+                logger.debug(
+                    f"세션 '{session_id}'의 첫 이벤트를 수신했습니다: {kind}"
+                )
                 stream_started = True
 
-            # 도구(노드) 실행 시작 시
+            # 도구(노드) 실행 시작 시: 클라이언트에 'tool_start' 이벤트를 보내 로딩 UI를 표시하게 함.
             if kind == "on_node_start":
                 node_name = event.get("name")
                 if node_name in TOOL_NODES:
@@ -137,43 +161,44 @@ async def stream_agent_response(
                     yield _build_sse_payload("tool_start", {"name": node_name})
                     force_new_message_after_tool = True
 
-            # 도구(노드) 실행 종료 시
+            # 도구(노드) 실행 종료 시: 클라이언트에 'tool_end' 이벤트를 보내 로딩 UI를 숨기게 함.
             elif kind == "on_node_end":
                 node_name = event.get("name")
                 if node_name in TOOL_NODES:
                     logger.debug(f"Tool Node End: {node_name}")
                     yield _build_sse_payload("tool_end", {"name": node_name})
 
-            # 이벤트 종류가 'on_chat_model_stream' (LLM 토큰 생성)일 경우
+            # LLM이 토큰을 생성할 때마다: 'token' 이벤트를 클라이언트에 전송.
             elif kind == "on_chat_model_stream":
-                # 이 이벤트가 'generate_final_answer' 노드에서 발생했는지 확인합니다.
+                # 이 이벤트가 최종 답변을 생성하는 'generate_final_answer' 노드에서 발생했는지 확인.
                 # 라우팅, 코드 생성 등 다른 노드의 LLM 호출은 최종 답변이 아니므로 무시합니다.
                 node_name = event.get("metadata", {}).get("langgraph_node")
                 if node_name != "generate_final_answer":
                     continue
 
-                # 스트리밍된 토큰(content)을 `final_answer`에 누적하고,
-                # 'token' 이벤트로 클라이언트에 즉시 전송합니다.
                 content = event.get("data", {}).get("chunk", {}).content
                 if content:
                     final_answer += content
-
-                    # 만약 방금 도구가 실행되었다면 이 토큰이 첫 토큰일 때 "new_message_flag"를 함께 전송
                     new_message_flag = False
                     if force_new_message_after_tool:
                         new_message_flag = True
-                        force_new_message_after_tool = False  # 플래그 초기화
+                        force_new_message_after_tool = (
+                            False  # 플래그는 한 번만 사용 후 초기화
+                        )
 
                     yield _build_sse_payload(
-                        "token", {"chunk": content, "new_message": new_message_flag}
+                        "token",
+                        {"chunk": content, "new_message": new_message_flag},
                     )
 
-            # 이벤트 종류가 'on_graph_end' (그래프 실행 종료)일 경우
+            # 그래프 실행이 모두 종료되었을 때
             elif kind == "on_graph_end":
-                logger.debug(f"세션 '{session_id}'의 그래프 실행이 종료되었습니다.")
+                logger.debug(
+                    f"세션 '{session_id}'의 그래프 실행이 종료되었습니다."
+                )
                 final_state = event.get("data", {}).get("output")
                 if final_state and isinstance(final_state, dict):
-                    # RAG를 통해 검색된 소스(Source)가 있다면 'sources' 이벤트로 클라이언트에 전송합니다.
+                    # RAG를 통해 검색된 소스(Source)가 있다면 'sources' 이벤트로 클라이언트에 전송.
                     tool_outputs = final_state.get("tool_outputs", {})
                     rag_chunks = tool_outputs.get("rag_chunks", [])
                     sources = [schemas.Source(**chunk) for chunk in rag_chunks]
@@ -185,7 +210,9 @@ async def stream_agent_response(
                         yield _build_sse_payload("sources", sources_dict)
 
         # 모든 스트림이 성공적으로 끝나면 'end' 이벤트를 전송합니다.
-        logger.info(f"세션 '{session_id}'의 스트리밍이 성공적으로 완료되었습니다.")
+        logger.info(
+            f"세션 '{session_id}'의 스트리밍이 성공적으로 완료되었습니다."
+        )
         yield _build_sse_payload("end", "Stream ended")
 
     except Exception as exc:
@@ -199,11 +226,11 @@ async def stream_agent_response(
         )
 
     finally:
+        # 스트림이 성공하든 실패하든 항상 실행되는 블록.
+        # FastAPI의 BackgroundTasks를 사용하여 응답 전송을 막지 않는 후처리 작업을 등록합니다.
         logger.debug(
             f"세션 '{session_id}'의 스트리밍 finally 블록 실행. 백그라운드 작업을 등록합니다."
         )
-        # 스트림이 성공하든 실패하든 항상 실행되는 블록.
-        # FastAPI의 BackgroundTasks를 사용하여 응답 전송을 막지 않는 후처리 작업을 등록합니다.
         background_tasks.add_task(
             save_chat_messages_task,
             agent=agent,
@@ -234,22 +261,22 @@ async def save_chat_messages_task(
     """
     [백그라운드 작업] 사용자 질문과 AI 답변을 DB에 비동기로 저장합니다.
     이 함수는 API 응답이 완료된 후에 실행되므로, 사용자 경험에 영향을 주지 않습니다.
+    또한, 대화 턴을 임베딩하여 '사건 기억'으로 저장하는 역할도 합니다.
     """
     logger.info(f"백그라운드 채팅 저장 작업 시작 (세션 ID: {session_id}).")
-    # 에이전트가 가지고 있는 DB 세션 팩토리를 통해 새 세션을 생성합니다.
-    # 의존성 주입으로 받은 세션을 사용하면, API 요청이 끝난 후 세션이 닫히므로
-    # 백그라운드 작업에서는 새로운 세션을 만들어야 합니다.
+    # 의존성 주입으로 받은 DB 세션은 API 요청-응답 사이클이 끝나면 닫힙니다.
+    # 따라서 백그라운드 작업에서는 새로운 세션을 생성해야 합니다.
+    # 에이전트가 가지고 있는 DB 세션 팩토리(`AsyncSessionLocal`)를 통해 새 세션을 생성합니다.
     session_local = getattr(agent.vector_store, "AsyncSessionLocal", None)
     if not session_local:
-        logger.error("백그라운드 저장을 위한 DB 세션 팩토리를 찾을 수 없습니다.")
+        logger.error(
+            "백그라운드 저장을 위한 DB 세션 팩토리를 찾을 수 없습니다."
+        )
         return
 
     embedding_model = getattr(agent.vector_store, "embedding_model", None)
     if not embedding_model:
         logger.error("백그라운드 저장을 위한 임베딩 모델을 찾을 수 없습니다.")
-        # 임베딩 없이는 '사건 기억' 저장이 불가능하므로, 여기서부턴 실행하지 않습니다.
-        # (단, chat_history 저장은 시도해야 하므로 로직을 분리할 수 있으나,
-        # 여기서는 에러 로깅 후 전체 함수를 리턴하는 것으로 간소화합니다.)
         return
 
     async with session_local() as session:
@@ -273,18 +300,18 @@ async def save_chat_messages_task(
                 )
                 session.add(ai_message)
 
-            if final_answer:  # AI 답변이 있는 턴만 기억으로 저장
+            # AI 답변이 있는 대화 턴만 '사건 기억(turn memory)'으로 저장
+            if final_answer:
                 turn_text = f"User: {user_query}\n\nAssistant: {final_answer}"
-
-                # 임베딩 생성 (embed_documents는 리스트를 받음)
-                embedding_vector_list = embedding_model.embed_documents([turn_text])
-                embedding_vector = embedding_vector_list[0]
+                embedding_vector = embedding_model.embed_documents([turn_text])[
+                    0
+                ]
 
                 turn_memory = models.ChatTurnMemory(
                     session_id=session_id,
                     user_id=user_id,
                     turn_text=turn_text,
-                    embedding=embedding_vector,  # 모델이 리스트를 반환
+                    embedding=embedding_vector,
                 )
                 session.add(turn_memory)
 
@@ -315,6 +342,7 @@ async def save_audit_log_task(state: dict, agent: Agent):
 
     # AgentState 딕셔너리를 JSON으로 직렬화합니다. 순환 참조 등이 있을 수 있으므로 예외 처리.
     try:
+        # default=str을 사용하여 datetime 등 JSON으로 변환할 수 없는 객체를 문자열로 변환합니다.
         state_json = json.loads(json.dumps(state, default=str))
     except TypeError as exc:
         logger.error(
@@ -325,7 +353,6 @@ async def save_audit_log_task(state: dict, agent: Agent):
             "original_exception": str(exc),
         }
 
-    # AgentAuditLog 모델 객체를 생성합니다.
     log_entry = models.AgentAuditLog(
         session_id=session_id,
         question=state.get("question", "N/A"),
@@ -340,7 +367,9 @@ async def save_audit_log_task(state: dict, agent: Agent):
         try:
             session.add(log_entry)
             await session.commit()
-            logger.info(f"감사 로그를 성공적으로 저장했습니다 (세션 ID: {session_id}).")
+            logger.info(
+                f"감사 로그를 성공적으로 저장했습니다 (세션 ID: {session_id})."
+            )
         except Exception as exc:
             logger.error(
                 f"감사 로그 저장 중 오류 발생 (세션 ID: {session_id}): {exc}",
@@ -357,9 +386,10 @@ async def fetch_user_sessions(
 
     이 쿼리는 두 개의 CTE(Common Table Expression)를 사용하여 효율적으로 작동합니다.
     1. `ranked_messages_cte`: 각 세션 내에서 'user' 역할의 메시지들에 시간순으로 순위를 매깁니다.
+       이를 통해 각 세션의 '첫 번째' 사용자 메시지를 식별할 수 있습니다.
     2. `latest_activity_cte`: 각 세션의 마지막 활동(메시지) 시간을 찾습니다.
 
-    최종적으로 두 CTE를 조인하여, 각 세션의 첫 번째 사용자 메시지를 제목으로,
+    최종적으로 두 CTE를 조인하여, 각 세션의 첫 번째 사용자 메시지를 제목(title)으로,
     그리고 마지막 활동 시간을 기준으로 정렬된 세션 목록을 만듭니다.
 
     Args:
@@ -369,13 +399,14 @@ async def fetch_user_sessions(
     Returns:
         list[schemas.ChatSession]: Pydantic 스키마로 변환된 채팅 세션 목록.
     """
-    logger.debug(f"사용자 '{user_id}'의 채팅 세션 목록 조회를 위한 쿼리를 구성합니다.")
-    # CTE 1: ranked_messages
+    logger.debug(
+        f"사용자 '{user_id}'의 채팅 세션 목록 조회를 위한 쿼리를 구성합니다."
+    )
+    # CTE 1: 각 세션의 첫 사용자 메시지를 찾기 위해 순위를 매김
     ranked_messages_cte = (
         select(
             models.ChatHistory.session_id,
             models.ChatHistory.content,
-            models.ChatHistory.created_at,
             func.row_number()
             .over(
                 partition_by=models.ChatHistory.session_id,
@@ -391,7 +422,7 @@ async def fetch_user_sessions(
         .cte("ranked_messages")
     )
 
-    # CTE 2: latest_activity
+    # CTE 2: 각 세션의 마지막 활동 시간을 찾음
     latest_activity_cte = (
         select(
             models.ChatHistory.session_id,
@@ -405,24 +436,31 @@ async def fetch_user_sessions(
         .cte("latest_activity")
     )
 
-    # 최종 쿼리
+    # 최종 쿼리: 두 CTE를 조인하여 필요한 정보를 조합하고 정렬
     stmt = (
         select(
             ranked_messages_cte.c.session_id,
-            func.left(ranked_messages_cte.c.content, 50).label("title"),
+            func.left(ranked_messages_cte.c.content, 50).label(
+                "title"
+            ),  # 제목은 50자로 제한
             latest_activity_cte.c.last_updated,
         )
         .join(
             latest_activity_cte,
-            ranked_messages_cte.c.session_id == latest_activity_cte.c.session_id,
+            ranked_messages_cte.c.session_id
+            == latest_activity_cte.c.session_id,
         )
-        .where(ranked_messages_cte.c.rn == 1)
-        .order_by(latest_activity_cte.c.last_updated.desc())
+        .where(
+            ranked_messages_cte.c.rn == 1
+        )  # 순위가 1인, 즉 첫 번째 사용자 메시지만 선택
+        .order_by(latest_activity_cte.c.last_updated.desc())  # 최신순으로 정렬
     )
 
     result = await db_session.execute(stmt)
     sessions = [schemas.ChatSession(**row._asdict()) for row in result]
-    logger.debug(f"사용자 '{user_id}'에 대해 {len(sessions)}개의 세션을 조회했습니다.")
+    logger.debug(
+        f"사용자 '{user_id}'에 대해 {len(sessions)}개의 세션을 조회했습니다."
+    )
     return sessions
 
 
@@ -442,8 +480,12 @@ async def fetch_chat_history(
         .order_by(models.ChatHistory.created_at.asc())
     )
     result = await db_session.execute(stmt)
-    messages = [schemas.ChatMessageInDB.from_orm(row) for row in result.scalars()]
-    logger.debug(f"세션 '{session_id}'에서 {len(messages)}개의 메시지를 조회했습니다.")
+    messages = [
+        schemas.ChatMessageInDB.from_orm(row) for row in result.scalars()
+    ]
+    logger.debug(
+        f"세션 '{session_id}'에서 {len(messages)}개의 메시지를 조회했습니다."
+    )
     return messages
 
 
@@ -467,6 +509,7 @@ async def upsert_user_profile(
     PostgreSQL의 `ON CONFLICT DO UPDATE` 기능을 사용하여 원자적(atomic)으로
     데이터를 처리합니다. 이를 통해 프로필이 없을 때는 새로 생성하고,
     이미 존재할 때는 내용을 업데이트하는 동작을 단일 쿼리로 안전하게 수행합니다.
+    이는 경쟁 조건(race condition)을 방지하는 데 효과적입니다.
 
     Args:
         db_session (AsyncSession): 데이터베이스 작업을 위한 세션.
@@ -477,6 +520,7 @@ async def upsert_user_profile(
     stmt = pg_insert(models.UserProfile).values(
         user_id=user_id, profile_text=profile_text.strip()
     )
+    # user_id가 충돌할 경우 (이미 레코드가 있을 경우), profile_text 필드를 업데이트합니다.
     update_stmt = stmt.on_conflict_do_update(
         index_elements=[models.UserProfile.user_id],
         set_={"profile_text": stmt.excluded.profile_text},

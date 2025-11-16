@@ -73,7 +73,9 @@ def upgrade() -> None:
         sa.Column(
             "attachment_id",
             sa.BIGINT(),
-            sa.ForeignKey("session_attachments.attachment_id", ondelete="CASCADE"),
+            sa.ForeignKey(
+                "session_attachments.attachment_id", ondelete="CASCADE"
+            ),
             nullable=False,
             index=True,
         ),
@@ -86,7 +88,9 @@ def upgrade() -> None:
     )
 
     # 3. 'session_attachment_chunks'에 벡터 컬럼 추가 (예: 768 차원)
-    op.execute("ALTER TABLE session_attachment_chunks ADD COLUMN embedding vector(768)")
+    op.execute(
+        "ALTER TABLE session_attachment_chunks ADD COLUMN embedding vector(768)"
+    )
 
     # 4. 'session_attachment_chunks'에 벡터 인덱스 생성
     op.execute(
@@ -103,7 +107,9 @@ def upgrade() -> None:
         sa.Column(
             "promoted_from_attachment_id",
             sa.BIGINT(),
-            sa.ForeignKey("session_attachments.attachment_id", ondelete="SET NULL"),
+            sa.ForeignKey(
+                "session_attachments.attachment_id", ondelete="SET NULL"
+            ),
             nullable=True,
             index=True,
         ),

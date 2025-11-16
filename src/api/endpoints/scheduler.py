@@ -3,13 +3,14 @@ API 라우터: 스케줄러 (Scheduler)
 - /scheduler/tasks: 사용자 정의 반복 작업 관리 (CRUD)
 """
 
+import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from .. import dependencies, schemas
 from ...core.logger import get_logger
 from typing import List
-from croniter import croniter  # 👈 [신규] Crontab 유효성 검사용
+from croniter import croniter
 
 router = APIRouter(
     prefix="/scheduler",
@@ -17,8 +18,6 @@ router = APIRouter(
     dependencies=[Depends(dependencies.get_current_user)],
 )
 logger = get_logger(__name__)
-
-# Pydantic 스키마 (간소화를 위해 여기에 정의, `schemas.py`로 이동 권장)
 
 
 @router.post(
@@ -95,7 +94,7 @@ async def delete_scheduled_task(
         "DELETE FROM scheduled_tasks WHERE task_id = :task_id AND user_id = :user_id"
     )
     result = await session.execute(
-        {"task_id": task_id, "user_id": current_user.user_id}
+        stmt, {"task_id": task_id, "user_id": current_user.user_id}
     )
     if result.rowcount == 0:
         raise HTTPException(

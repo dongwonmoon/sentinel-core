@@ -86,7 +86,9 @@ async def update_user_permissions(
     )
     old_user = result.fetchone()
     if not old_user:
-        logger.warning(f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다.")
+        logger.warning(
+            f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다."
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
@@ -157,7 +159,9 @@ async def create_registered_tool(
         )
         return new_tool
     except sa.exc.IntegrityError:
-        logger.warning(f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다.")
+        logger.warning(
+            f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다."
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A tool with this name already exists.",
@@ -332,7 +336,8 @@ async def approve_document_promotion(
     attachment = await db_session.get(models.SessionAttachment, attachment_id)
     if not attachment or attachment.status != "pending_review":
         raise HTTPException(
-            status_code=404, detail="Attachment not found or not pending review."
+            status_code=404,
+            detail="Attachment not found or not pending review.",
         )
 
     # 관리자가 확정한 ID가 영구 KB에 이미 있는지 재확인
@@ -386,7 +391,8 @@ async def reject_document_promotion(
     attachment = await db_session.get(models.SessionAttachment, attachment_id)
     if not attachment or attachment.status != "pending_review":
         raise HTTPException(
-            status_code=404, detail="Attachment not found or not pending review."
+            status_code=404,
+            detail="Attachment not found or not pending review.",
         )
 
     # 1. 상태를 'rejected'(반려됨)로 변경

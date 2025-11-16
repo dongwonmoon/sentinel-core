@@ -3,15 +3,13 @@
 FastAPI 애플리케이션의 메인 진입점(Entrypoint)입니다.
 
 이 파일의 역할:
-- FastAPI 앱 인스턴스 생성 및 기본 정보 설정
-- CORS(Cross-Origin Resource Sharing) 미들웨어 설정
-- API 엔드포인트 라우터(Router) 등록
-- 요청 처리 시간 측정을 위한 커스텀 미들웨어 추가
-- API 서버의 상태를 확인하기 위한 루트 엔드포인트('/') 정의
+- FastAPI 앱 인스턴스 생성: 애플리케이션의 기본 정보를 설정합니다.
+- 미들웨어(Middleware) 설정: 모든 API 요청에 공통적으로 적용될 로직(CORS, 로깅, 메트릭 수집 등)을 추가합니다.
+- API 라우터(Router) 등록: 각 기능별로 분리된 엔드포인트들을 모듈화하여 메인 앱에 연결합니다.
+- 상태 확인 엔드포인트 정의: API 서버가 정상적으로 실행 중인지 확인할 수 있는 경로를 제공합니다.
 """
 
 import time
-import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,13 +18,14 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # 내부 모듈 임포트
 from ..core.config import get_settings
 from ..core.logger import get_logger
-from ..core.metrics import collector, router as metrics_router
-from .endpoints import auth, chat, documents, admin, notifications, scheduler
+from ..core.metrics import collector
+from ..core.metrics import router as metrics_router
+from .endpoints import admin, auth, chat, documents, notifications, scheduler
 
 # --- 초기 설정 ---
-# 설정 객체 로드
+# 애플리케이션 설정 객체를 로드합니다.
 settings = get_settings()
-# 로거 인스턴스 생성
+# 전역 로거 인스턴스를 생성합니다.
 logger = get_logger(__name__)
 
 logger.info("FastAPI 애플리케이션 초기화를 시작합니다...")
@@ -41,29 +40,32 @@ app = FastAPI(
 logger.info(f"'{settings.app.title}' v1.0.0 앱 인스턴스가 생성되었습니다.")
 
 # --- 미들웨어(Middleware) 설정 ---
+# 미들웨어는 모든 요청/응답에 대해 특정 처리를 수행하는 강력한 도구입니다.
 
-# 1. CORS 미들웨어: 다른 도메인에서의 API 요청을 허용하기 위한 설정입니다.
-# 개발 환경에서는 모든 출처('*')를 허용하여 편의성을 높입니다.
-# 프로덕션 환경에서는 보안을 위해 `allow_origins` 목록에 실제 프론트엔드 서비스의 도메인만 명시해야 합니다.
+# 1. CORS 미들웨어: 다른 도메인(Origin)에서의 API 요청을 허용하기 위한 설정입니다.
+#    웹 프론트엔드와 백엔드 API가 다른 도메인에서 호스팅될 때 필수적입니다.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 모든 출처에서의 요청을 허용
-    allow_credentials=True,  # 요청에 쿠키를 포함하도록 허용
-    allow_methods=["*"],  # 모든 HTTP 메소드(GET, POST, 등)를 허용
-    allow_headers=["*"],  # 모든 HTTP 헤더를 허용
+    allow_origins=[
+        "*"
+    ],  # 중요: 프로덕션 환경에서는 보안을 위해 실제 프론트엔드 도메인 목록으로 교체해야 합니다.
+    allow_credentials=True,  # 요청에 쿠키를 포함하도록 허용합니다. (인증에 필요)
+    allow_methods=["*"],  # 모든 HTTP 메소드(GET, POST, 등)를 허용합니다.
+    allow_headers=["*"],  # 모든 HTTP 헤더를 허용합니다.
 )
-logger.info("CORS 미들웨어가 모든 출처에 대해 허용 모드로 추가되었습니다.")
+logger.warning(
+    "CORS 미들웨어가 모든 출처('*')를 허용하도록 설정되었습니다. 프로덕션 배포 전 반드시 수정해야 합니다."
+)
 
 
-# 2. 요청 처리 시간 측정 미들웨어
+# 2. 요청 처리 시간 측정 미들웨어: 각 API 요청의 처리 시간을 측정하여 메트릭으로 기록합니다.
+#    이는 시스템의 성능을 모니터링하고 서비스 수준 목표(SLO)를 추적하는 데 필수적입니다.
 class RequestTimingMiddleware(BaseHTTPMiddleware):
-    """
-    각 API 요청의 처리 시간을 측정하여 Prometheus 메트릭으로 기록하는 미들웨어입니다.
-    """
+    """각 API 요청의 처리 시간을 측정하여 Prometheus 메트릭으로 기록하는 미들웨어입니다."""
 
     async def dispatch(self, request: Request, call_next):
         start_time = time.perf_counter()
-        # 다음 미들웨어 또는 실제 엔드포인트로 요청을 전달합니다.
+        # 다음 미들웨어 또는 실제 엔드포인트로 요청을 전달하고 응답을 받습니다.
         response = await call_next(request)
         end_time = time.perf_counter()
 
@@ -84,43 +86,33 @@ logger.info(
 
 
 # --- 라우터(Router) 등록 ---
-# 각 기능별로 분리된 엔드포인트들을 메인 앱에 등록합니다.
-# 이렇게 모듈화하면 코드 관리가 용이해집니다.
+# 각 기능별로 분리된 엔드포인트(라우터)들을 메인 앱에 등록합니다.
+# `prefix`는 해당 라우터의 모든 엔드포인트에 공통적으로 적용될 URL 경로 접두사입니다.
+# `tags`는 OpenAPI 문서(예: /docs)에서 엔드포인트를 그룹화하는 데 사용됩니다.
 logger.info("API 라우터를 등록합니다...")
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-logger.debug("'/api/auth' 라우터가 등록되었습니다.")
-
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
-logger.debug("'/api/chat' 라우터가 등록되었습니다.")
-
 app.include_router(
     documents.router, prefix="/api/documents", tags=["Documents"]
 )
-logger.debug("'/api/documents' 라우터가 등록되었습니다.")
-
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-logger.debug("'/api/admin' 라우터가 등록되었습니다.")
-
 app.include_router(
     notifications.router, prefix="/api/notifications", tags=["Notifications"]
 )
-logger.debug("'/api/notifications' 라우터가 등록되었습니다.")
-
 app.include_router(
     scheduler.router, prefix="/api/scheduler", tags=["Scheduler"]
 )
-logger.debug("'/api/scheduler' 라우터가 등록되었습니다.")
-
 app.include_router(metrics_router, prefix="/metrics", tags=["Metrics"])
-logger.debug("'/metrics' 라우터가 등록되었습니다.")
+logger.info("모든 API 라우터가 성공적으로 등록되었습니다.")
 
 
 # --- 루트 엔드포인트 ---
 @app.get("/", tags=["Root"])
 async def read_root():
     """
-    루트 엔드포인트.
-    API 서버가 정상적으로 실행 중인지 간단히 확인할 수 있는 상태 확인용 엔드포인트입니다.
+    루트 엔드포인트 ('/').
+    API 서버가 정상적으로 실행 중인지 간단히 확인할 수 있는 상태 확인(Health Check)용 엔드포인트입니다.
+    운영 환경에서 로드 밸런서나 쿠버네티스의 Liveness/Readiness Probe 등으로 활용될 수 있습니다.
     """
     logger.debug("루트 엔드포인트 '/'가 호출되었습니다.")
     return {"message": f"Welcome to {settings.app.title}"}

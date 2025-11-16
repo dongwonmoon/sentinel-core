@@ -160,6 +160,8 @@ async def get_db_session(
         AsyncSession: 비동기 데이터베이스 작업을 위한 SQLAlchemy 세션 객체.
     """
     vector_store = agent.vector_store
+    # PgVectorStore 만이 AsyncSession 팩토리를 노출하므로, 다른 벡터 스토어가 활성화된 경우
+    # 잘못된 의존성 사용을 조기에 차단한다.
     if not isinstance(vector_store, PgVectorStore):
         logger.error(
             "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."

@@ -10,17 +10,18 @@
 5.  **설정 캐싱**: `@lru_cache`를 사용하여 설정 객체를 한 번만 로드하고 재사용하여 성능을 최적화합니다.
 """
 import logging
+import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Tuple, Type
+
 import yaml
-import time
 from pydantic import BaseModel, Field, computed_field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
-from functools import lru_cache
 
 # 로거 설정
 # get_settings()가 호출되기 전에 로거가 필요할 수 있으므로, 기본 로거를 여기서 설정합니다.
@@ -45,6 +46,7 @@ def get_settings() -> "Settings":
     logger.info(
         f"설정 객체 초기화 완료. (소요 시간: {end_time - start_time:.4f}초)"
     )
+
     # 데이터베이스 URL과 같은 주요 설정 값의 일부를 마스킹하여 로그에 출력
     # 실제 운영 환경에서는 더 정교한 마스킹 처리가 필요할 수 있습니다.
     logger.debug(
@@ -58,7 +60,9 @@ def get_settings() -> "Settings":
 
 
 # --- 1. YAML 로더 함수 ---
-def yaml_config_settings_source() -> dict[str, Any]:
+def yaml_config_settings_source(
+    settings: BaseSettings,
+) -> dict[str, Any]:
     """
     프로젝트 루트의 'config.yml' 파일을 읽어 Pydantic 설정 소스로 사용합니다.
 
@@ -194,6 +198,9 @@ class Settings(BaseSettings):
     """
 
     # --- .env 또는 환경 변수로만 관리되어야 하는 민감 정보 ---
+    # 이 섹션의 설정들은 보안에 민감하므로, 코드나 config.yml에 직접 하드코딩하지 않고
+    # .env 파일이나 환경 변수를 통해 주입하는 것을 원칙으로 합니다.
+
     # 데이터베이스 연결 정보
     POSTGRES_USER: str = Field(..., description="PostgreSQL 사용자 이름")
     POSTGRES_PASSWORD: str = Field(..., description="PostgreSQL 비밀번호")
@@ -208,18 +215,24 @@ class Settings(BaseSettings):
     REDIS_PORT: int = Field(6379, description="Redis 포트 번호")
 
     # JWT 인증 관련 비밀 키 및 설정
-    AUTH_SECRET_KEY: str = Field(..., description="JWT 서명에 사용될 비밀 키")
+    AUTH_SECRET_KEY: str = Field(
+        ...,
+        description="JWT 서명에 사용될 비밀 키. 외부에 노출되어서는 안 됩니다.",
+    )
     AUTH_ALGORITHM: str = Field("HS256", description="JWT 서명 알고리즘")
     AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
-        60 * 24 * 7, description="액세스 토큰 만료 시간(분)"
-    )  # 7 days
+        60 * 24 * 7, description="액세스 토큰 만료 시간(분). 예: 7일"
+    )
 
     # 외부 서비스 API 키 (선택 사항)
+    # 필요한 서비스의 API 키만 .env 파일에 추가하여 사용합니다.
     OPENAI_API_KEY: Optional[str] = Field(None, description="OpenAI API 키")
     ANTHROPIC_API_KEY: Optional[str] = Field(
         None, description="Anthropic API 키"
     )
-    COHERE_API_KEY: Optional[str] = Field(None, description="Cohere API 키")
+    COHERE_API_KEY: Optional[str] = Field(
+        None, description="Cohere API 키 (Reranker용)"
+    )
     GOOGLE_API_KEY: Optional[str] = Field(
         None, description="Google API 키 (검색용)"
     )
@@ -229,7 +242,7 @@ class Settings(BaseSettings):
 
     # RunPod 등 외부에서 호스팅되는 Powerful LLM을 위한 별도 API 키
     POWERFUL_OLLAMA_API_KEY: Optional[str] = Field(
-        None, description="외부 호스팅 LLM용 API 키"
+        None, description="외부 호스팅 LLM(예: RunPod) 전용 API 키"
     )
 
     # Ollama API 기본 URL (docker-compose 등에서 주입)
@@ -249,7 +262,7 @@ class Settings(BaseSettings):
     reranker: RerankerSettings = Field(..., description="리랭커 설정")
     tools_enabled: List[
         Literal["duckduckgo_search", "google_search", "code_execution"]
-    ] = Field([], description="활성화할 도구 목록")
+    ] = Field([], description="활성화할 기본 제공 도구 목록")
 
     # --- 동적으로 계산되는 필드 (Computed Fields) ---
     # 이 필드들은 다른 설정 값에 의존하여 동적으로 생성됩니다.
@@ -306,15 +319,15 @@ class Settings(BaseSettings):
         """
         설정 로드 우선순위를 커스터마이징합니다.
         Pydantic은 이 메서드가 반환하는 튜플의 순서대로 설정을 덮어씁니다.
-        (앞 순서가 가장 높은 우선순위를 가집니다.)
+        (튜플의 앞 순서가 가장 높은 우선순위를 가집니다.)
 
-        우선순위:
+        **로드 우선순위 (높은 순 -> 낮은 순):**
         1.  `init_settings`: 코드에서 `Settings()`를 호출할 때 직접 전달된 인자.
         2.  `env_settings`: 시스템 환경 변수.
         3.  `dotenv_settings`: `.env` 파일에 정의된 변수.
         4.  `yaml_config_settings_source`: `config.yml` 파일.
         5.  `file_secret_settings`: Docker 시크릿과 같은 파일 기반 시크릿.
-        (Pydantic 모델의 기본값은 이 모든 소스 이후에 마지막으로 적용됩니다.)
+        6.  **Pydantic 모델의 기본값**: 위의 어떤 소스에서도 설정되지 않은 경우 마지막으로 적용됩니다.
         """
         logger.debug("설정 소스 우선순위를 커스터마이징합니다.")
         return (
@@ -326,16 +339,16 @@ class Settings(BaseSettings):
         )
 
 
-# 아래 코드는 get_settings()를 직접 호출하여 설정 객체를 가져오는 예시입니다.
-# 애플리케이션의 다른 부분에서는 `from src.core.config import get_settings`를 통해
-# 캐시된 설정 객체를 안전하게 가져와 사용해야 합니다.
+# 이 파일이 직접 실행될 때 아래의 코드가 동작합니다.
+# 설정 로직이 올바르게 작동하는지 확인하기 위한 테스트 및 시연 목적으로 사용됩니다.
 if __name__ == "__main__":
-    import time
-
-    # 로깅 기본 설정 (테스트용)
+    # 테스트를 위해 기본 로깅 설정을 DEBUG 레벨로 구성합니다.
+    # 이는 설정 파일 로드 과정의 상세한 로그를 확인하기 위함입니다.
     logging.basicConfig(level=logging.DEBUG)
 
     print("--- 설정 객체 로드 테스트 ---")
+    # get_settings() 함수를 호출하여 설정 객체를 가져옵니다.
+    # 이 함수는 내부적으로 캐싱되므로, 여러 번 호출해도 실제 초기화는 한 번만 일어납니다.
     settings_instance = get_settings()
 
     print("\n[App Settings]")
@@ -353,10 +366,11 @@ if __name__ == "__main__":
     )
 
     print("\n[Database Settings]")
-    # 비밀번호는 제외하고 출력
+    # 보안을 위해 비밀번호는 제외하고 주요 연결 정보만 출력합니다.
     print(f"  - DB Host: {settings_instance.POSTGRES_HOST}")
     print(f"  - DB Port: {settings_instance.POSTGRES_PORT}")
     print(f"  - DB User: {settings_instance.POSTGRES_USER}")
+    # 데이터베이스 URL에서 비밀번호를 마스킹하여 출력합니다.
     print(
         f"  - Async URL: {settings_instance.DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}"
     )
@@ -367,14 +381,15 @@ if __name__ == "__main__":
     print("\n[Enabled Tools]")
     print(f"  - {settings_instance.tools_enabled}")
 
-    # 캐시 테스트
+    # get_settings()의 캐시 기능이 올바르게 동작하는지 확인합니다.
     print("\n--- 캐시 기능 테스트 ---")
     start = time.time()
     s1 = get_settings()
-    print(f"첫 번째 호출: {time.time() - start:.6f}초")
+    print(f"첫 번째 호출: {time.time() - start:.6f}초 소요")
 
     start = time.time()
     s2 = get_settings()
-    print(f"두 번째 호출: {time.time() - start:.6f}초")
+    print(f"두 번째 호출: {time.time() - start:.6f}초 소요 (캐시된 결과)")
 
+    # 두 객체가 동일한 메모리 주소를 참조하는지 확인하여 싱글턴 패턴을 검증합니다.
     print(f"s1과 s2는 동일한 객체인가? {s1 is s2}")
