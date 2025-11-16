@@ -10,11 +10,12 @@ const CRON_PRESETS = [
 ];
 
 export default function SchedulerPanel() {
-  const { user } = useAuth();
-  if (!user) return null;
+  const { user, token } = useAuth();
+  if (!user || !token) return null;
+
 
   const { tasks, isLoading, createTask, deleteTask, isPending } =
-    useScheduledTasks(user.token);
+    useScheduledTasks(token);
   
   // 새 작업 등록을 위한 폼 상태
   const [repoUrl, setRepoUrl] = useState("");
@@ -34,7 +35,7 @@ export default function SchedulerPanel() {
     }
 
     const newTask: TaskCreate = {
-      task_name: "run_scheduled_github_summary", // 👈 tasks.py에 하드코딩된 이름
+      task_name: "run_scheduled_github_summary",
       schedule: schedule.trim(),
       task_kwargs: {
         repo_url: repoUrl.trim(),

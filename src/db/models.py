@@ -36,6 +36,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 
 class Base(DeclarativeBase):
@@ -257,7 +258,7 @@ class DocumentChunk(Base):
     )
     embedding: Mapped[List[float]] = mapped_column(
         "embedding",
-        Text,  # 실제 타입은 Alembic 마이그레이션에서 pgvector의 vector 타입으로 지정됨
+        Vector(768),  # 하드코딩 주의
         nullable=False,
         comment="텍스트에 대한 벡터 임베딩 (pgvector 타입)",
     )
@@ -267,14 +268,10 @@ class DocumentChunk(Base):
 
     # --- 관계(Relationship) 정의 ---
     # DocumentChunk -> Document (N:1 관계)
-    document: Mapped["Document"] = relationship(
-        "Document", back_populates="chunks"
-    )
+    document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 
     def __repr__(self) -> str:
-        return (
-            f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
-        )
+        return f"<DocumentChunk(chunk_id={self.chunk_id}, doc_id='{self.doc_id}')>"
 
 
 # ==============================================================================
@@ -315,9 +312,7 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="메시지 내용"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -368,7 +363,7 @@ class ChatTurnMemory(Base):
     )
     embedding: Mapped[List[float]] = mapped_column(
         "embedding",
-        Text,  # 실제 타입은 Alembic 마이그레이션에서 pgvector의 vector 타입으로 지정됨
+        Vector(768),  # 하드코딩 주의
         nullable=False,
         comment="turn_text에 대한 벡터 임베딩",
     )
@@ -379,7 +374,9 @@ class ChatTurnMemory(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        return (
+            f"<ChatTurnMemory(turn_id={self.turn_id}, session_id='{self.session_id}')>"
+        )
 
 
 # ==============================================================================
@@ -468,7 +465,7 @@ class SessionAttachmentChunk(Base):
     )
     embedding: Mapped[List[float]] = mapped_column(
         "embedding",
-        Text,  # 실제 타입은 Alembic 마이그레이션에서 pgvector의 vector 타입으로 지정됨
+        Vector(768),  # 하드코딩 주의
         nullable=False,
         comment="텍스트에 대한 벡터 임베딩 (pgvector 타입)",
     )
@@ -483,7 +480,9 @@ class SessionAttachmentChunk(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        return (
+            f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        )
 
 
 # ==============================================================================
@@ -602,6 +601,4 @@ class AgentAuditLog(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"
-        )
+        return f"<AgentAuditLog(id={self.log_id}, session_id='{self.session_id}')>"

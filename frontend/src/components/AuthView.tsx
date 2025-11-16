@@ -2,6 +2,7 @@ import { useState } from "react";
 import { z } from "zod";
 import { getApiBaseUrl } from "../hooks/useEnvironment";
 import { AuthResult } from "../providers/AuthProvider";
+import { User } from "../schemas";
 
 const loginSchema = z.object({
   username: z.string().min(2),
@@ -30,14 +31,18 @@ export default function AuthView({ onSuccess }: Props) {
     setLoading(true);
     try {
       if (mode === "register") {
-        await callApi("/auth/register", {
+        await callApiPostJson("/auth/register", {
           username,
           password,
           permission_groups: ["all_users"],
         });
       }
       const tokenResponse = await callForm("/auth/token", { username, password });
-      onSuccess({ token: tokenResponse.access_token, username });
+      const userResponse = await callApiGet<User>(
+        "/auth/me",
+        tokenResponse.access_token
+      );
+      onSuccess({ token: tokenResponse.access_token, user: userResponse });
     } catch (err) {
       setError(err instanceof Error ? err.message : "알 수 없는 오류");
     } finally {
@@ -94,7 +99,7 @@ export default function AuthView({ onSuccess }: Props) {
   );
 }
 
-async function callApi(path: string, body: unknown) {
+async function callApiPostJson(path: string, body: unknown) {
   const base = getApiBaseUrl();
   const res = await fetch(`${base}${path}`, {
     method: "POST",
@@ -106,6 +111,18 @@ async function callApi(path: string, body: unknown) {
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+async function callApiGet<T = any>(path: string, token: string): Promise<T> {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}${path}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    throw new Error(`/me 요청 실패 (${res.status})`);
+  }
+  return res.json() as T;
 }
 
 async function callForm(path: string, body: { username: string; password: string }) {

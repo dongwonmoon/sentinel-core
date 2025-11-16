@@ -24,7 +24,7 @@ export default function ChatLayout() {
   // 이 컴포넌트는 여러 커스텀 훅을 사용하여 앱의 상태와 데이터를 관리합니다.
 
   // 인증 상태 훅: 현재 로그인된 사용자 정보와 로그아웃 함수를 가져옵니다.
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   // 전역 UI 상태 훅: 활성 세션 ID, 활성 패널 등 앱의 전반적인 UI 상태를 관리합니다.
   const {
     activeSessionId,
@@ -32,10 +32,10 @@ export default function ChatLayout() {
     activePanel,
     setActivePanel,
     handleNewChat,
+    selectedDoc,
+    setSelectedDoc,
   } = useChatShellState();
 
-  // 데이터 페칭 훅:
-  const token = user?.token;
   if (!token) return null; // 토큰이 없으면 렌더링하지 않음 (방어적 코딩)
 
   // 사이드바에 표시될 전체 채팅 세션 목록을 가져옵니다.
@@ -62,6 +62,7 @@ export default function ChatLayout() {
 
   // --- 3. 커맨드 팔레트 상태 및 이벤트 핸들러 ---
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
 
   // '/' 키를 누르면 커맨드 팔레트를 열기 위한 전역 이벤트 리스너를 등록합니다.
   useEffect(() => {
@@ -97,7 +98,7 @@ export default function ChatLayout() {
   // --- 4. UI 렌더링 ---
   return (
     <div className="app-background">
-      <div className="app-shell">
+      <div className={`app-shell ${isRightPanelOpen ? "right-panel-visible" : "right-panel-hidden"}`}>
         {/* 좌측 사이드바: 대화 목록 표시 및 새 대화 시작 */}
         <Sidebar
           conversations={chatSessions || []}
@@ -107,59 +108,64 @@ export default function ChatLayout() {
         />
         {/* 중앙 채팅창: 메시지 표시, 새 메시지 작성, 파일 첨부 등 */}
         <ChatWindow
+          documentOptions={documentOptions}
+          selectedDoc={selectedDoc}
+          onDocChange={setSelectedDoc}
           messages={session?.messages ?? []}
           loading={session?.loading ?? false}
           sendMessage={session?.sendMessage}
           attachments={session?.attachments ?? []}
           handleAttachFile={session?.handleAttachFile}
           handleRequestPromotion={session?.handleRequestPromotion}
+          isRightPanelOpen={isRightPanelOpen}
+          onToggleRightPanel={() => setIsRightPanelOpen(prev => !prev)}
         />
-        {/* 우측 패널: 컨텍스트 정보 및 추가 기능 제공 */}
-        <div
-          className="context-panel" // 바깥쪽 래퍼는 context-panel 스타일 재사용
-          style={{ padding: 0, gap: 0, overflow: "hidden" }}
-        >
-          {/* 탭 버튼 UI */}
-          <PanelTabs
-            activeId={activePanel}
-            onChange={(id) => setActivePanel(id as PanelId)}
-            tabs={[
-              { id: "context", label: "지식 소스" },
-              { id: "scheduler", label: "반복 작업" },
-            ]}
-          />
-
-          {/* 탭 콘텐츠: activePanel 상태에 따라 조건부 렌더링 */}
+        <div className="right-panel-wrapper">
           <div
-            style={{ flex: 1, overflowY: "auto", background: "rgba(10, 12, 20, 0.7)" }}
+            className="context-panel" 
+            style={{ padding: 0, gap: 0, overflow: "hidden", height: '100%' }}
           >
+            {/* 탭 버튼 UI */}
+            <PanelTabs
+              activeId={activePanel}
+              onChange={(id) => setActivePanel(id as PanelId)}
+              tabs={[
+                { id: "context", label: "지식 소스" },
+                { id: "scheduler", label: "반복 작업" },
+              ]}
+            />
+
+            {/* 탭 콘텐츠 */}
             <div
-              className={`fade-in-out ${
-                activePanel === "context" ? "active" : ""
-              }`}
+              style={{ flex: 1, overflowY: "auto", background: "rgba(10, 12, 20, 0.7)" }}
             >
-              {activePanel === "context" && (
-                <ContextPanel
-                  documents={documentOptions}
-                  onRefresh={refetchDocs}
-                />
-              )}
-            </div>
-            <div
-              className={`fade-in-out ${
-                activePanel === "scheduler" ? "active" : ""
-              }`}
-            >
-              {activePanel === "scheduler" && <SchedulerPanel />}
+              <div
+                className={`fade-in-out ${
+                  activePanel === "context" ? "active" : ""
+                }`}
+              >
+                {activePanel === "context" && (
+                  <ContextPanel
+                    documents={documentOptions}
+                    onRefresh={refetchDocs}
+                    onSelectDoc={setSelectedDoc}
+                  />
+                )}
+              </div>
+              <div
+                className={`fade-in-out ${
+                  activePanel === "scheduler" ? "active" : ""
+                }`}
+              >
+                {activePanel === "scheduler" && <SchedulerPanel />}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* 전역 알림을 표시하는 호스트 컴포넌트 */}
         <NotificationHost />
       </div>
 
-      {/* 커맨드 팔레트 UI (모달 형태) */}
       <CommandPalette
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}

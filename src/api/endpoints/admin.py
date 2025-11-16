@@ -22,11 +22,10 @@ from ...worker import tasks
 
 logger = get_logger(__name__)
 
-# '/admin' 접두사를 가진 APIRouter를 생성합니다.
 # `dependencies=[Depends(dependencies.get_admin_user)]` 설정을 통해
 # 이 라우터에 속한 모든 API는 요청 시 관리자 권한을 자동으로 검증합니다.
 router = APIRouter(
-    prefix="/admin",
+    prefix="",
     tags=["Admin"],
     dependencies=[Depends(dependencies.get_admin_user)],
 )
@@ -86,9 +85,7 @@ async def update_user_permissions(
     )
     old_user = result.fetchone()
     if not old_user:
-        logger.warning(
-            f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다."
-        )
+        logger.warning(f"권한 업데이트 실패: 사용자 ID {user_id}를 찾을 수 없습니다.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
@@ -159,9 +156,7 @@ async def create_registered_tool(
         )
         return new_tool
     except sa.exc.IntegrityError:
-        logger.warning(
-            f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다."
-        )
+        logger.warning(f"도구 등록 실패: '{tool_data.name}' 이름이 이미 존재합니다.")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A tool with this name already exists.",

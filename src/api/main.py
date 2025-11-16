@@ -80,9 +80,7 @@ class RequestTimingMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestTimingMiddleware)
-logger.info(
-    "요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다."
-)
+logger.info("요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다.")
 
 
 # --- 라우터(Router) 등록 ---
@@ -90,18 +88,14 @@ logger.info(
 # `prefix`는 해당 라우터의 모든 엔드포인트에 공통적으로 적용될 URL 경로 접두사입니다.
 # `tags`는 OpenAPI 문서(예: /docs)에서 엔드포인트를 그룹화하는 데 사용됩니다.
 logger.info("API 라우터를 등록합니다...")
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+app.include_router(documents.router, prefix="/documents", tags=["Documents"])
+app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(
-    documents.router, prefix="/api/documents", tags=["Documents"]
+    notifications.router, prefix="/notifications", tags=["Notifications"]
 )
-app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-app.include_router(
-    notifications.router, prefix="/api/notifications", tags=["Notifications"]
-)
-app.include_router(
-    scheduler.router, prefix="/api/scheduler", tags=["Scheduler"]
-)
+app.include_router(scheduler.router, prefix="/scheduler", tags=["Scheduler"])
 app.include_router(metrics_router, prefix="/metrics", tags=["Metrics"])
 logger.info("모든 API 라우터가 성공적으로 등록되었습니다.")
 

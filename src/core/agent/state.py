@@ -29,6 +29,8 @@ class AgentState(TypedDict):
     doc_ids_filter: Optional[List[str]]
     chat_history: List[Dict[str, str]]
     user_profile: Optional[str] = None
+    user_id: Optional[str]
+    session_id: Optional[str]
     hybrid_context: str
     available_dynamic_tools: List[DynamicTool]
     # 'route_query'가 선택한 동적 도구 정보

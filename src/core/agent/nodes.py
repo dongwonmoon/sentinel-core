@@ -65,9 +65,7 @@ class AgentNodes:
 
         # DB 접근이 필요한 노드를 위해, vector_store에서 DB 세션 팩토리를 가져옵니다.
         # 이는 vector_store가 DB 연결 정보를 중앙에서 관리하고 있음을 전제합니다.
-        self.AsyncSessionLocal = getattr(
-            vector_store, "AsyncSessionLocal", None
-        )
+        self.AsyncSessionLocal = getattr(vector_store, "AsyncSessionLocal", None)
         if not self.AsyncSessionLocal:
             logger.warning(
                 "AgentNodes: DB 세션 팩토리를 찾을 수 없습니다. 'long_term_memory' 및 'dynamic_tools' 기능이 비활성화됩니다."
@@ -166,13 +164,9 @@ class AgentNodes:
                 logger.debug(
                     f"하이브리드 컨텍스트(C): 관련 '사건 기억' {len(relevant_turns)}개 인출."
                 )
-                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(
-                    relevant_turns
-                )
+                return f"[관련 과거 기억 (RAG)]\n" + "\n---\n".join(relevant_turns)
             except Exception as e:
-                logger.warning(
-                    f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True
-                )
+                logger.warning(f"하이브리드 컨텍스트(C) 인출 실패: {e}", exc_info=True)
                 return ""
 
         async def get_available_dynamic_tools() -> List[DynamicTool]:
@@ -192,9 +186,7 @@ class AgentNodes:
                         {"allowed_groups": state["permission_groups"]},
                     )
                     tools = [DynamicTool(**row._asdict()) for row in result]
-                logger.debug(
-                    f"하이브리드 컨텍스트(D): 동적 도구 {len(tools)}개 로드."
-                )
+                logger.debug(f"하이브리드 컨텍스트(D): 동적 도구 {len(tools)}개 로드.")
                 return tools
             except Exception as e:
                 logger.warning(
@@ -242,9 +234,7 @@ class AgentNodes:
         context = state["hybrid_context"]
 
         # LLM에게 제공할 프롬프트를 구성합니다. 사용 가능한 정적/동적 도구 목록을 명시합니다.
-        static_tools_desc = [
-            tool.to_tool_string() for name, tool in self.tools.items()
-        ]
+        static_tools_desc = [tool.to_tool_string() for name, tool in self.tools.items()]
         dynamic_tools = state.get("available_dynamic_tools", [])
         dynamic_tools_desc = [tool.to_tool_string() for tool in dynamic_tools]
 
@@ -269,10 +259,9 @@ class AgentNodes:
         )
 
         # 'fast' LLM을 호출하여 신속하게 도구를 결정합니다.
-        response = await self.llm_fast.invoke(
-            [HumanMessage(content=prompt)], config={}
-        )
+        response = await self.llm_fast.invoke([HumanMessage(content=prompt)], config={})
         response_content = response.content.strip()
+        logger.debug(f"라우터 응답: {response_content}")
 
         try:
             # 응답이 JSON 형식이면 동적 도구 호출로 간주합니다.
@@ -305,22 +294,16 @@ class AgentNodes:
             # 기존 정적 도구 포맷([LLM, TOOL])인지 확인합니다.
             logger.debug("라우터 응답이 정적 도구 포맷입니다.")
             decision_text = response_content.replace("[", "").replace("]", "")
-            llm_part, tool_part = [
-                part.strip() for part in decision_text.split(",")
-            ]
+            llm_part, tool_part = [part.strip() for part in decision_text.split(",")]
 
-            chosen_llm = (
-                "powerful" if "powerful" in llm_part.lower() else "fast"
-            )
+            chosen_llm = "powerful" if "powerful" in llm_part.lower() else "fast"
             tool_choice = (
                 tool_part
                 if tool_part in ["RAG", "WebSearch", "CodeExecution", "None"]
                 else "None"
             )
 
-            logger.info(
-                f"라우터 결정 -> LLM: {chosen_llm}, 정적 도구: {tool_choice}"
-            )
+            logger.info(f"라우터 결정 -> LLM: {chosen_llm}, 정적 도구: {tool_choice}")
             return {
                 "chosen_llm": chosen_llm,
                 "tool_choice": tool_choice,
@@ -390,9 +373,7 @@ class AgentNodes:
 
         except httpx.HTTPStatusError as e:
             error_message = f"Error: API call failed with status {e.response.status_code}. Details: {e.response.text}"
-            logger.warning(
-                f"동적 도구 '{tool_name}' API 호출 실패: {error_message}"
-            )
+            logger.warning(f"동적 도구 '{tool_name}' API 호출 실패: {error_message}")
             return {"tool_outputs": {"dynamic_tool_result": error_message}}
         except Exception as e:
             error_message = f"Error: An unexpected error occurred: {e}"
@@ -413,9 +394,7 @@ class AgentNodes:
         """
         logger.debug("--- [Agent Node: 듀얼 RAG Tool] ---")
         question = state["question"]
-        query_embedding = self.vector_store.embedding_model.embed_query(
-            question
-        )
+        query_embedding = self.vector_store.embedding_model.embed_query(question)
 
         try:
             # 두 개의 검색 작업을 병렬로 실행하여 응답 시간을 최적화합니다.
@@ -439,14 +418,10 @@ class AgentNodes:
                 f"듀얼 RAG 검색 완료: Global {len(global_docs)}건, Session {len(session_docs)}건"
             )
 
-            all_retrieved_docs: List[Dict[str, Any]] = (
-                global_docs + session_docs
-            )
+            all_retrieved_docs: List[Dict[str, Any]] = global_docs + session_docs
 
             if not all_retrieved_docs:
-                logger.info(
-                    "듀얼 RAG 검색 결과 없음 - 질문='%s'", question[:80]
-                )
+                logger.info("듀얼 RAG 검색 결과 없음 - 질문='%s'", question[:80])
                 failed = state.get("failed_tools", []) + ["RAG"]
                 return {
                     "tool_outputs": {"rag_chunks": []},
@@ -483,17 +458,13 @@ class AgentNodes:
                 "웹 검색 도구 미설정 - 'duckduckgo_search' 키를 찾을 수 없음"
             )
             return {
-                "tool_outputs": {
-                    "search_result": "웹 검색 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"search_result": "웹 검색 도구가 설정되지 않았습니다."}
             }
 
         result = await tool.arun(tool_input=state["question"])
         return {"tool_outputs": {"search_result": result}}
 
-    async def run_code_execution_tool(
-        self, state: AgentState
-    ) -> Dict[str, Any]:
+    async def run_code_execution_tool(self, state: AgentState) -> Dict[str, Any]:
         """
         [노드 2-C: 코드 실행] 'CodeExecution' 도구를 3단계에 걸쳐 실행합니다.
         1. **컨텍스트 검색**: RAG를 통해 질문과 관련된 내부 코드 컨텍스트(예: 다른 함수, 클래스)를 검색합니다.
@@ -503,13 +474,9 @@ class AgentNodes:
         logger.debug("--- [Agent Node: CodeExecution Tool] ---")
         tool = self.tools.get("python_repl")
         if not tool:
-            logger.warning(
-                "코드 실행 도구 미설정 - 'python_repl' 키를 찾을 수 없음"
-            )
+            logger.warning("코드 실행 도구 미설정 - 'python_repl' 키를 찾을 수 없음")
             return {
-                "tool_outputs": {
-                    "code_result": "코드 실행 도구가 설정되지 않았습니다."
-                }
+                "tool_outputs": {"code_result": "코드 실행 도구가 설정되지 않았습니다."}
             }
 
         # 1. RAG로 사내 코드 컨텍스트 검색
@@ -528,9 +495,7 @@ class AgentNodes:
                 if code_docs
                 else "No internal code context found."
             )
-            logger.info(
-                "CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs)
-            )
+            logger.info("CodeExecution: %d개의 코드 스니펫 주입.", len(code_docs))
         except Exception as e:
             logger.warning("CodeExecution: RAG 컨텍스트 검색 실패: %s", e)
             context_str = "Error fetching code context."
@@ -552,9 +517,7 @@ class AgentNodes:
         # `tool.run`은 동기 함수이므로, `asyncio.to_thread`를 사용해 별도 스레드에서 실행하여
         # 이벤트 루프가 블로킹되는 것을 방지합니다.
         code_result = await asyncio.to_thread(tool.run, tool_input=code_to_run)
-        logger.debug(
-            "코드 실행 결과 수신 - result='%s...'", str(code_result)[:120]
-        )
+        logger.debug("코드 실행 결과 수신 - result='%s...'", str(code_result)[:120])
 
         tool_outputs = state.get("tool_outputs", {})
         tool_outputs["code_result"] = str(code_result)
@@ -586,26 +549,30 @@ class AgentNodes:
         tool_outputs = state.get("tool_outputs", {})
 
         if tool_choice == "RAG" and tool_outputs.get("rag_chunks"):
-            docs = [
-                chunk["page_content"] for chunk in tool_outputs["rag_chunks"]
-            ]
+            for chunk in tool_outputs["rag_chunks"]:
+                print(chunk)
+            docs = [chunk["chunk_text"] for chunk in tool_outputs["rag_chunks"]]
             context_str = "[사내 RAG 정보]\n" + "\n\n---\n\n".join(docs)
         elif tool_choice == "WebSearch" and tool_outputs.get("search_result"):
             context_str = f"[웹 검색 결과]\n{tool_outputs['search_result']}"
         elif tool_choice == "CodeExecution" and tool_outputs.get("code_result"):
             code_input = state.get("code_input", "")
             code_result = tool_outputs.get("code_result", "")
-            context_str = f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
-        elif tool_choice == "DynamicTool" and tool_outputs.get(
-            "dynamic_tool_result"
-        ):
+            context_str = (
+                f"[실행된 코드]\n{code_input}\n\n[코드 실행 결과]\n{code_result}"
+            )
+        elif tool_choice == "DynamicTool" and tool_outputs.get("dynamic_tool_result"):
             tool_name = state.get("dynamic_tool_to_call").name
             tool_result = tool_outputs.get("dynamic_tool_result")
             context_str = f"[실행된 동적 도구: {tool_name}]\n{tool_result}"
         elif tool_choice == "None":
-            context_str = "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            context_str = (
+                "도움말: 일반 대화 모드입니다. RAG, 웹 검색, 코드 실행 없이 답변합니다."
+            )
         else:
-            context_str = "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            context_str = (
+                "도움말: 관련 정보를 찾지 못했거나, 선택된 도구의 결과가 없습니다."
+            )
 
         # 최종 프롬프트를 조립합니다.
         hybrid_context = state.get("hybrid_context", "")
@@ -665,5 +632,7 @@ class AgentNodes:
             # 가드레일 실행 중 타임아웃 또는 기타 오류 발생 시, 안전을 위해 답변을 차단하고
             # 오류 메시지를 포함한 안전한 답변으로 대체합니다.
             logger.error("Guardrail: 가드레일 실행 중 오류 발생: %s", e)
-            safe_answer = f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            safe_answer = (
+                f"답변 생성 중 오류가 발생했습니다. (Error during guardrail check: {e})"
+            )
             return {"answer": safe_answer}

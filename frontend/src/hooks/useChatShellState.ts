@@ -7,8 +7,7 @@ import { useMutation } from "@tanstack/react-query";
 export type PanelId = "context" | "scheduler";
 
 export function useChatShellState() {
-  const { user } = useAuth();
-  const token = user?.token;
+  const { token } = useAuth();
 
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);

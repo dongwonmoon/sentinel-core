@@ -81,9 +81,7 @@ def get_sync_db_session():
         yield session
         session.commit()
     except Exception as e:
-        logger.error(
-            f"동기 DB 세션 중 오류 발생! 롤백됩니다. {e}", exc_info=True
-        )
+        logger.error(f"동기 DB 세션 중 오류 발생! 롤백됩니다. {e}", exc_info=True)
         session.rollback()
         raise
     finally:
@@ -105,14 +103,10 @@ async def _generate_hypothetical_question(chunk_text: str, llm: BaseLLM) -> str:
             llm.invoke([HumanMessage(content=prompt)], config={}), timeout=15.0
         )
         question = response.content.strip()
-        logger.debug(
-            f"HyDE 생성: 원본 '%.20s...' -> 질문 '%s'", chunk_text, question
-        )
+        logger.debug(f"HyDE 생성: 원본 '%.20s...' -> 질문 '%s'", chunk_text, question)
         return question
     except asyncio.TimeoutError:
-        logger.warning(
-            f"HyDE: 가상 질문 생성 시간 초과 (원본: '%.20s...')", chunk_text
-        )
+        logger.warning(f"HyDE: 가상 질문 생성 시간 초과 (원본: '%.20s...')", chunk_text)
         return chunk_text  # 실패 시 원본 텍스트를 그대로 반환하여 임베딩 소스로 사용
     except Exception as e:
         logger.warning(
@@ -132,9 +126,7 @@ async def _load_and_split_documents(
     각 청크에 대한 가상 질문(HyDE)을 병렬로 생성합니다.
     """
     file_ext = os.path.splitext(file_name)[1].lower()
-    logger.debug(
-        f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'"
-    )
+    logger.debug(f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'")
 
     # 1. 파일 확장자에 따라 적절한 로더 선택
     if file_ext == ".pdf":
@@ -161,9 +153,7 @@ async def _load_and_split_documents(
             )
 
     split_chunks = splitter.split_documents(docs)
-    logger.debug(
-        f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다."
-    )
+    logger.debug(f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다.")
 
     # 3. 각 청크에 대해 가상 질문을 비동기적으로 병렬 생성 (HyDE)
     tasks = [
@@ -189,9 +179,15 @@ def _initialize_components_for_task() -> Dict[str, Any]:
     """
     logger.debug("Celery 태스크를 위한 컴포넌트 초기화를 시작합니다.")
     settings = get_settings()
-    embedding_model = factories.create_embedding_model(settings)
-    vector_store = factories.create_vector_store(settings, embedding_model)
-    fast_llm = factories.create_llm(settings.llm.fast, settings)
+    embedding_model = factories.create_embedding_model(
+        settings.embedding, settings, settings.OPENAI_API_KEY
+    )
+    vector_store = factories.create_vector_store(
+        settings.vector_store, settings, embedding_model
+    )
+    fast_llm = factories.create_llm(
+        settings.llm.fast, settings, settings.OPENAI_API_KEY
+    )
     text_splitter_default = RecursiveCharacterTextSplitter(
         chunk_size=1000, chunk_overlap=200
     )
@@ -264,9 +260,7 @@ def process_session_attachment_indexing(
             {
                 "attachment_id": attachment_id,
                 "chunk_text": chunk.page_content,
-                "embedding": str(
-                    embedding_vector
-                ),  # pgvector는 문자열 리스트로 받음
+                "embedding": str(embedding_vector),  # pgvector는 문자열 리스트로 받음
                 "extra_metadata": json.dumps(chunk.metadata),
             }
             for chunk, embedding_vector in zip(split_chunks, chunk_embeddings)
@@ -303,7 +297,9 @@ def process_session_attachment_indexing(
 
         asyncio.run(save_chunks_to_db())
 
-        success_message = f"'{file_name}' 임시 인덱싱 완료. {len(chunks_to_store)}개 청크 저장됨."
+        success_message = (
+            f"'{file_name}' 임시 인덱싱 완료. {len(chunks_to_store)}개 청크 저장됨."
+        )
         logger.info(
             f"--- [Celery Task ID: {task_id}] 임시 인덱싱 성공: {success_message} ---"
         )
@@ -449,9 +445,7 @@ def process_document_indexing(
             }
             for chunk in all_chunks_to_index
         ]
-        asyncio.run(
-            vector_store.upsert_documents(documents_data=documents_data)
-        )
+        asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
 
         success_message = f"'{file_name}' 처리 완료. {total_files_processed}개 파일에서 {len(all_chunks_to_index)}개 청크를 인덱싱했습니다."
         logger.info(
@@ -488,9 +482,7 @@ def process_github_repo_indexing(
         total_files_processed = 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            logger.info(
-                f"'{repo_name}' 클론을 시작합니다. 대상 디렉토리: {temp_dir}"
-            )
+            logger.info(f"'{repo_name}' 클론을 시작합니다. 대상 디렉토리: {temp_dir}")
             # `depth=50` 옵션으로 최근 50개 커밋만 가져와 클론 속도 및 용량 최적화
             Repo.clone_from(repo_url, temp_dir, depth=50)
             logger.info(f"'{repo_name}' 클론 완료.")
@@ -550,9 +542,7 @@ def process_github_repo_indexing(
             }
             for chunk in all_chunks_to_index
         ]
-        asyncio.run(
-            vector_store.upsert_documents(documents_data=documents_data)
-        )
+        asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
 
         success_message = f"'{repo_name}' 처리 완료. {total_files_processed}개 파일에서 {len(all_chunks_to_index)}개 청크를 인덱싱했습니다."
         logger.info(
@@ -609,9 +599,7 @@ def check_stale_documents(days_old: int = 180):
         with get_sync_db_session() as session:
             stale_documents = session.execute(find_stale_stmt).fetchall()
             if not stale_documents:
-                logger.info(
-                    "[Beat Task] 오래된 문서가 없습니다. 작업을 종료합니다."
-                )
+                logger.info("[Beat Task] 오래된 문서가 없습니다. 작업을 종료합니다.")
                 return "No stale documents found."
 
             logger.warning(
@@ -631,26 +619,18 @@ def check_stale_documents(days_old: int = 180):
                 )
 
             if notifications_to_create:
-                session.execute(
-                    insert_notification_stmt, notifications_to_create
-                )
+                session.execute(insert_notification_stmt, notifications_to_create)
                 notifications_sent = len(notifications_to_create)
     except Exception as e:
-        logger.error(
-            f"[Beat Task] 오래된 문서 스캔 중 오류 발생: {e}", exc_info=True
-        )
+        logger.error(f"[Beat Task] 오래된 문서 스캔 중 오류 발생: {e}", exc_info=True)
         return f"Error during stale document check: {e}"
 
-    logger.info(
-        f"[Beat Task] 스캔 완료. {notifications_sent}개의 알림을 생성했습니다."
-    )
+    logger.info(f"[Beat Task] 스캔 완료. {notifications_sent}개의 알림을 생성했습니다.")
     return f"Scan complete. Sent {notifications_sent} notifications."
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
-def run_scheduled_github_summary(
-    self, task_id: int, user_id: int, repo_url: str
-):
+def run_scheduled_github_summary(self, task_id: int, user_id: int, repo_url: str):
     """
     [User Task] 사용자가 DB에 등록한 스케줄에 따라, 특정 GitHub 리포지토리의
     최근 24시간 커밋을 요약하고 사용자에게 알림을 보냅니다.
@@ -676,9 +656,7 @@ def run_scheduled_github_summary(
                 [f"- {c.message.splitlines()[0]}" for c in commits]
             )
 
-        prompt = prompts.SUMMARY_PROMPT_TEMPLATE.format(
-            commit_messages=commit_messages
-        )
+        prompt = prompts.SUMMARY_PROMPT_TEMPLATE.format(commit_messages=commit_messages)
         response = asyncio.run(
             fast_llm.invoke([HumanMessage(content=prompt)], config={})
         )
@@ -779,9 +757,7 @@ def notify_admins(message: str):
     with get_sync_db_session() as session:
         # 1. 'admin' 그룹 사용자 ID 조회
         admin_users = session.execute(
-            text(
-                "SELECT user_id FROM users WHERE 'admin' = ANY(permission_groups)"
-            )
+            text("SELECT user_id FROM users WHERE 'admin' = ANY(permission_groups)")
         ).fetchall()
 
         if not admin_users:
@@ -789,8 +765,7 @@ def notify_admins(message: str):
             return
 
         notifications = [
-            {"user_id": user.user_id, "message": message}
-            for user in admin_users
+            {"user_id": user.user_id, "message": message} for user in admin_users
         ]
 
         # 2. 알림 삽입
@@ -847,8 +822,7 @@ def promote_to_kb(
                 # 1. 원본 첨부파일 정보 조회 (메타데이터 복사용)
                 att_result = await session.execute(
                     select(db_models.SessionAttachment).where(
-                        db_models.SessionAttachment.attachment_id
-                        == attachment_id
+                        db_models.SessionAttachment.attachment_id == attachment_id
                     )
                 )
                 attachment = att_result.scalar_one_or_none()

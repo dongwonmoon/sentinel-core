@@ -39,7 +39,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """사용자 생성(회원가입) 요청 스키마"""
 
-    password: str = Field(..., min_length=8)
+    password: str = Field(...)
     permission_groups: List[str] = Field(default_factory=lambda: ["all_users"])
 
 

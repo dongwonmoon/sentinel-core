@@ -33,10 +33,9 @@ from ...services import document_service
 from .admin import _log_admin_action
 from ...db import models
 
-# '/documents' 접두사를 가진 APIRouter를 생성합니다.
 # 모든 엔드포인트는 기본적으로 `get_current_user` 의존성을 통해 인증된 사용자만 접근 가능합니다.
 router = APIRouter(
-    prefix="/documents",
+    prefix="",
     tags=["Documents"],
     dependencies=[Depends(dependencies.get_current_user)],
 )
@@ -71,9 +70,7 @@ async def upload_and_index_document(
     try:
         permission_groups = json.loads(permission_groups_json)
         if not isinstance(permission_groups, list):
-            raise ValueError(
-                "permission_groups는 반드시 리스트 형태여야 합니다."
-            )
+            raise ValueError("permission_groups는 반드시 리스트 형태여야 합니다.")
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning(
             f"잘못된 형식의 permission_groups_json 수신: {permission_groups_json}, 오류: {e}"
@@ -174,9 +171,7 @@ async def request_document_promotion(
 
     # 2. '영구 KB'에 동일한 ID가 있는지 사전 확인 (중복 방지)
     # (관리자가 승인 시점에 또 확인하겠지만, 1차 방어)
-    existing_doc = await db_session.get(
-        models.Document, body.suggested_kb_doc_id
-    )
+    existing_doc = await db_session.get(models.Document, body.suggested_kb_doc_id)
     if existing_doc:
         raise HTTPException(
             status_code=409,
@@ -322,9 +317,7 @@ async def get_task_status(task_id: str):
 async def delete_indexed_document(
     body: schemas.DeleteDocumentRequest,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
-    db_session: AsyncSession = Depends(
-        dependencies.get_db_session
-    ),  # db_session 주입
+    db_session: AsyncSession = Depends(dependencies.get_db_session),  # db_session 주입
 ):
     """
     ID 또는 접두사를 기준으로 인덱싱된 지식 소스(파일, ZIP, 레포)를 삭제합니다.
@@ -340,13 +333,11 @@ async def delete_indexed_document(
     try:
         # document_service를 통해 소유권/관리자 권한을 함께 확인하며 삭제
         is_admin = "admin" in current_user.permission_groups
-        deleted_doc_ids = (
-            await document_service.delete_documents_by_id_or_prefix(
-                db_session=db_session,
-                doc_id_or_prefix=doc_id_or_prefix,
-                user_id=current_user.user_id,
-                is_admin=is_admin,  # 관리자는 소유권 없이도 삭제 가능
-            )
+        deleted_doc_ids = await document_service.delete_documents_by_id_or_prefix(
+            db_session=db_session,
+            doc_id_or_prefix=doc_id_or_prefix,
+            user_id=current_user.user_id,
+            is_admin=is_admin,  # 관리자는 소유권 없이도 삭제 가능
         )
 
         deleted_count = len(deleted_doc_ids)
@@ -383,9 +374,7 @@ async def delete_indexed_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(
-            f"문서 삭제 중 예기치 않은 오류 발생: '{doc_id_or_prefix}'"
-        )
+        logger.exception(f"문서 삭제 중 예기치 않은 오류 발생: '{doc_id_or_prefix}'")
         raise HTTPException(
             status_code=500,
             detail=f"문서 삭제 중 서버 오류가 발생했습니다: {e}",

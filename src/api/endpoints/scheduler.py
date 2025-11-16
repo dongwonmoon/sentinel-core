@@ -13,7 +13,7 @@ from typing import List
 from croniter import croniter
 
 router = APIRouter(
-    prefix="/scheduler",
+    prefix="",
     tags=["Scheduler"],
     dependencies=[Depends(dependencies.get_current_user)],
 )
@@ -97,6 +97,4 @@ async def delete_scheduled_task(
         stmt, {"task_id": task_id, "user_id": current_user.user_id}
     )
     if result.rowcount == 0:
-        raise HTTPException(
-            status_code=404, detail="Task not found or access denied."
-        )
+        raise HTTPException(status_code=404, detail="Task not found or access denied.")

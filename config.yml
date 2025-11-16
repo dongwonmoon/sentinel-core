@@ -4,7 +4,7 @@
 app:
   title: "Sentinel RAG System"
   description: "Enterprise-grade RAG system with advanced capabilities."
-  log_level: "INFO" # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR, CRITICAL
   log_format: "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(funcName)s - %(message)s"
 
 # LLM(Large Language Model) 설정
@@ -12,9 +12,12 @@ llm:
   # 빠른 LLM: 라우팅, 간단한 답변 등 빠른 응답이 중요한 작업에 사용
   fast:
     # provider: "ollama", "openai", "anthropic" 중 선택
-    provider: "ollama"
-    model_name: "gemma3:1b"
-    # api_base: "http://localhost:11435"
+    provider: "openai"
+    model_name: "llama-3.3-70b-versatile"
+    api_base: "https://api.groq.com/openai/v1"
+    # provider: "ollama"
+    # model_name: "gemma3:1b"
+    # # api_base: "http://localhost:11435"
     temperature: 0
 
   # 강력한 LLM: 코드 생성, 복잡한 추론 등 고성능이 필요한 작업에 사용

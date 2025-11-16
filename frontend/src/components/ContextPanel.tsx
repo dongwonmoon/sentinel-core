@@ -7,6 +7,7 @@ import { SessionAttachment } from "../hooks/useChatSession";
 import Modal from "./Modal";
 import { PromotionApprovalRequest } from "../schemas";
 import PanelTabs from "./PanelTabs";
+import { useTaskPolling, TaskStatusResponse } from "../hooks/useTaskPolling";
 
 // (거버넌스) 관리자 승인 모달
 function ApprovalModal({
@@ -42,7 +43,7 @@ function ApprovalModal({
       <form onSubmit={handleSubmit} className="panel-form" style={{ gap: '1rem' }}>
         <h3>지식 베이스(KB) 승인</h3>
         <p className="muted">
-          <b>{attachment.filename}</b> (요청자: {attachment.user_id})
+          <b>{attachment.filename}</b> (요청자: {attachment.user_id || '알 수 없음'})
         </p>
         <p className="muted" style={{ borderLeft: '3px solid var(--color-primary)', paddingLeft: '1rem' }}>
           <b>요청자 메모:</b> {attachment.pending_review_metadata?.note_to_admin || "(없음)"}
@@ -89,7 +90,7 @@ function AdminReviewPanel({ token }: { token: string }) {
   // 2. 승인/반려 Mutation
   const { mutate: approveMutate, isPending: isApproving } = useMutation({
     mutationFn: ({ attachmentId, data }: { attachmentId: number, data: PromotionApprovalRequest }) =>
-      apiRequest(`/admin/approve_promotion/${attachmentId}`, {
+      apiRequest<{ task_id: string }>(`/admin/approve_promotion/${attachmentId}`, {
         method: 'POST',
         token,
         json: data,
@@ -156,120 +157,24 @@ type Props = {
 };
 
 export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Props) {
-  const { user } = useAuth();
-  const token = user?.token;
-  if (!token) return null;
-
+  const { user, token } = useAuth();
   const [docSearch, setDocSearch] = useState("");
+  if (!token || !user) return null;
+
   const isAdmin = useMemo(() => user.permission_groups.includes("admin"), [user]);
   const [activeTab, setActiveTab] = useState("kb_search");
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [repoUrl, setRepoUrl] = useState("");
-  const [repoLoading, setRepoLoading] = useState(false);
-  const [knowledgeName, setKnowledgeName] = useState("");
-  const [uploadGroups, setUploadGroups] = useState<string[]>(["all_users"]);
-  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
-  const [docSearch, setDocSearch] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const dirInputRef = useRef<HTMLInputElement>(null);
-
-  const { startPolling } = useTaskPolling({
-    token,
-    onSuccess: (response) => {
-      notify(extractResultMessage(response, "인덱싱 완료!"));
-      onRefresh();
-    },
-    onFailure: (response) =>
-      notify(extractResultMessage(response, "인덱싱 실패")),
-    onError: (err) => notify(err.message),
-    onTimeout: () => notify("인덱싱 시간이 초과되었습니다."),
-  });
-
-  async function handleUpload(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!selectedFiles || selectedFiles.length === 0) {
-      notify("업로드할 파일 또는 디렉토리를 선택해야 합니다.");
-      return;
-    }
-    if (!knowledgeName.trim()) {
-      notify("지식 소스 이름을 입력해야 합니다.");
-      return;
-    }
-
-    const formData = new FormData();
-
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i];
-      // 디렉토리 선택 시 webkitRelativePath에 'MyProject/src/main.py'가 들어옴
-      // 파일 선택 시 file.name에 'main.py'가 들어옴
-      const path = (file as any).webkitRelativePath || file.name;
-      formData.append("files", file, path);
-    }
-
-    // 2. [수정] 👈 지식 소스 이름과 권한 그룹을 FormData에 추가
-    const displayName = knowledgeName.trim();
-    formData.append("display_name", displayName); // 👈 사용자가 입력한 이름
-    formData.append("permission_groups_json", JSON.stringify(uploadGroups));
-
-    setUploadLoading(true);
-    try {
-      const result = await apiRequest<{ task_id: string }>(
-        "/documents/upload-and-index",
-        {
-          method: "POST",
-          token,
-          body: formData,
-          errorMessage: "업로드 실패",
-        },
-      );
-      notify(`'${displayName}' 인덱싱을 시작했습니다.`);
-      
-      // 상태 초기화
-      setKnowledgeName("");
-      setSelectedFiles(null);
-      e.currentTarget.reset();
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      if (dirInputRef.current) dirInputRef.current.value = "";
-      
-      startPolling(result.task_id);
-      
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "업로드 중 오류");
-    } finally {
-      setUploadLoading(false);
-    }
-  }
-
-  async function handleRepo(e: React.FormEvent) {
-    e.preventDefault();
-    if (!repoUrl) return;
-    setRepoLoading(true);
-    try {
-      const result = await apiRequest<{ task_id: string }>(
-        "/documents/index-github-repo",
-        {
-          method: "POST",
-          token,
-          json: { repo_url: repoUrl },
-          errorMessage: "레포 인덱싱 실패",
-        },
-      );
-      notify("GitHub 인덱싱을 시작했습니다.");
-      setRepoUrl("");
-      startPolling(result.task_id);
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "인덱싱 오류");
-    } finally {
-      setRepoLoading(false);
-    }
-  }
 
   async function handleDelete(docId: string) {
     if (!confirm("정말 삭제하시겠습니까?")) return;
+
+    if (!token) {
+      notify("인증 정보가 없습니다. 다시 로그인해주세요.");
+      return;
+    }
     try {
       await apiRequest("/documents", {
         method: "DELETE",
-        token,
+        token: token,
         json: { doc_id_or_prefix: docId },
         errorMessage: "삭제 실패",
       });
@@ -320,7 +225,7 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
           <input
             type="search"
             placeholder="이름 또는 ID로 필터링"
-            value={docSearch}
+            value={docSearch || ''}
             onChange={(e) => setDocSearch(e.target.value)}
             style={{ marginBottom: "0.75rem" }}
           />
@@ -353,5 +258,5 @@ function extractResultMessage(
 ) {
   if (!response.result) return fallback;
   if (typeof response.result === "string") return response.result;
-  return response.result.message ?? fallback;
+  return (response.result as any).message ?? fallback;
 }

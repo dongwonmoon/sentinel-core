@@ -16,8 +16,8 @@ type ProfileResponse = {
 };
 
 export default function ProfileModal({ onClose }: Props) {
-  const { user } = useAuth();
-  if (!user) return null;
+  const { user, token } = useAuth();
+  if (!user || !token) return null;
 
   const queryClient = useQueryClient();
   const [profileText, setProfileText] = useState("");
@@ -27,7 +27,7 @@ export default function ProfileModal({ onClose }: Props) {
     queryKey: ["profile"],
     queryFn: () =>
       apiRequest<ProfileResponse>("/chat/profile", {
-        token: user.token,
+        token: token,
         errorMessage: "프로필 로딩 실패",
       }),
   });
@@ -44,7 +44,7 @@ export default function ProfileModal({ onClose }: Props) {
     mutationFn: (text: string) =>
       apiRequest("/chat/profile", {
         method: "POST",
-        token: user.token,
+        token: token,
         json: { profile_text: text },
         errorMessage: "프로필 저장 실패",
       }),

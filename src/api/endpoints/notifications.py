@@ -12,7 +12,7 @@ from ...core.logger import get_logger
 from typing import List
 
 router = APIRouter(
-    prefix="/notifications",
+    prefix="",
     tags=["Notifications"],
     dependencies=[Depends(dependencies.get_current_user)],
 )

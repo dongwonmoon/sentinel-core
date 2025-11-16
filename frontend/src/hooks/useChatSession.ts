@@ -48,6 +48,7 @@ type ApiHistoryMessage = {
 export type SessionAttachment = {
   /** DB에 저장된 첨부파일의 고유 ID */
   attachment_id: number;
+  user_id?: number;
   /** 원본 파일 이름 */
   filename: string;
   /** 파일의 현재 상태 (인덱싱 중, 임시 사용 가능, 승인 대기 등) */
@@ -464,7 +465,7 @@ async function streamQuery(
   let accumulatedChunks = ""; // SSE 데이터는 분할되어 도착할 수 있으므로, 이를 누적하기 위한 변수.
 
   try {
-    const response = await fetch(`${API_BASE}/chat/query-stream`, {
+    const response = await fetch(`${API_BASE}/chat/query`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -94,6 +94,8 @@ type Props = {
     attachmentId: number,
     metadata: { suggested_kb_doc_id: string; note_to_admin: string }
   ) => Promise<void>;
+  isRightPanelOpen: boolean;
+  onToggleRightPanel: () => void;
 };
 
 /**
@@ -111,48 +113,26 @@ export default function ChatWindow({
   attachments,
   handleAttachFile,
   handleRequestPromotion,
+  isRightPanelOpen,
+  onToggleRightPanel,
 }: Props) {
   // KB 등록 요청 모달을 띄울 첨부 파일 정보를 담는 상태
   const [promotingAttachment, setPromotingAttachment] = useState<SessionAttachment | null>(null);
 
+  const currentRagFilterName = useMemo(() => {
+    if (selectedDoc) {
+      return documentOptions.find(d => d.id === selectedDoc)?.name || "필터됨";
+    }
+    return "모든 영구 문서";
+  }, [selectedDoc, documentOptions]);
+
   return (
     <section className="chat-window">
       {/* 채팅창 헤더: 제목, 영구 KB 필터, 임시 첨부파일 목록 표시 */}
-      <header className="chat-header">
-        <div>
-          <h2>대화</h2>
-          <p className="muted">
-            [영구 KB 필터: {selectedDoc ? documentOptions.find(d => d.id === selectedDoc)?.name : "모든 문서"}]
-          </p>
-          
-          {/* 현재 세션에 첨부된 임시 파일 목록을 렌더링 */}
-          {attachments.length > 0 && (
-            <div className="doc-list" style={{ gap: '0.25rem', marginTop: '0.5rem' }}>
-              {attachments.map(att => (
-                <div key={att.attachment_id || att.task_id} className="doc-item" style={{ padding: '0.4rem 0.6rem' }}>
-                  <span style={{ fontSize: '0.85rem' }}>📎 {att.filename}</span>
-                  {/* 각 첨부 파일의 상태에 따라 다른 UI를 표시 */}
-                  {att.status === 'indexing' && <small className="muted"> (인덱싱 중...)</small>}
-                  {att.status === 'failed' && <small style={{ color: '#f87171' }}> (실패)</small>}
-                  {att.status === 'temporary' && (
-                    // 'temporary' 상태(인덱싱 완료)일 때만 KB 등록 요청 버튼을 표시
-                    <button 
-                      className="ghost" 
-                      style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
-                      onClick={() => setPromotingAttachment(att)}
-                    >
-                      [+] KB에 추가
-                    </button>
-                  )}
-                  {att.status === 'pending_review' && <small className="muted"> (승인 대기중)</small>}
-                  {att.status === 'promoted' && <small style={{ color: '#10b981' }}> (KB 등록됨)</small>}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        {/* 영구 지식베이스(KB) 문서를 필터링하기 위한 드롭다운 */}
+      <header className="chat-header gemini-style-header">
+        {/* 왼쪽: RAG 필터 선택 (Gemini의 모델 선택기 위치) */}
         <select
+          className="gemini-select"
           value={selectedDoc ?? ""}
           onChange={(e) => onDocChange(e.target.value || null)}
         >
@@ -163,8 +143,43 @@ export default function ChatWindow({
             </option>
           ))}
         </select>
+        {/* 오른쪽: 패널 토글 버튼 */}
+        <button 
+          className="ghost gemini-icon-button"
+          onClick={onToggleRightPanel}
+          title={isRightPanelOpen ? "컨텍스트 패널 닫기" : "컨텍스트 패널 열기"}
+        >
+          {/* 나중에 SVG 아이콘으로 교체 */}
+          {isRightPanelOpen ? "▶" : "◀"}
+        </button>
       </header>
-
+      <div className="session-context-area">          
+        {/* 현재 세션에 첨부된 임시 파일 목록을 렌더링 */}
+        {attachments.length > 0 && (
+          <div className="doc-list" style={{ gap: '0.25rem', marginTop: '0.5rem' }}>
+            {attachments.map(att => (
+              <div key={att.attachment_id || att.task_id} className="doc-item" style={{ padding: '0.4rem 0.6rem' }}>
+                <span style={{ fontSize: '0.85rem' }}>📎 {att.filename}</span>
+                {/* 각 첨부 파일의 상태에 따라 다른 UI를 표시 */}
+                {att.status === 'indexing' && <small className="muted"> (인덱싱 중...)</small>}
+                {att.status === 'failed' && <small style={{ color: '#f87171' }}> (실패)</small>}
+                {att.status === 'temporary' && (
+                  // 'temporary' 상태(인덱싱 완료)일 때만 KB 등록 요청 버튼을 표시
+                  <button 
+                    className="ghost" 
+                    style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                    onClick={() => setPromotingAttachment(att)}
+                  >
+                    [+] KB에 추가
+                  </button>
+                )}
+                {att.status === 'pending_review' && <small className="muted"> (승인 대기중)</small>}
+                {att.status === 'promoted' && <small style={{ color: '#10b981' }}> (KB 등록됨)</small>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       {/* 메시지 목록을 렌더링하는 컴포넌트 */}
       <MessageList messages={messages} sendMessage={sendMessage} />
 

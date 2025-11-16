@@ -103,9 +103,7 @@ async def query_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to build agent context.",
         )
-    logger.debug(
-        f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료."
-    )
+    logger.debug(f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료.")
 
     # `chat_service.stream_agent_response`는 비동기 제너레이터(Async Generator)를 반환합니다.
     # FastAPI는 이 제너레이터로부터 생성되는 데이터 조각들을 클라이언트로 스트리밍합니다.
@@ -150,17 +148,13 @@ async def update_session_context(
     try:
         # 기존 컨텍스트를 읽어와서, 새로운 필터 정보로 덮어쓰거나 추가합니다.
         existing_context_raw = await redis.get(session_key)
-        context = (
-            json.loads(existing_context_raw) if existing_context_raw else {}
-        )
+        context = json.loads(existing_context_raw) if existing_context_raw else {}
         context["doc_ids_filter"] = body.doc_ids_filter
 
         # 업데이트된 컨텍스트를 Redis에 24시간 만료 시간으로 저장합니다.
         await redis.set(session_key, json.dumps(context), ex=86400)
 
-        logger.debug(
-            f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}"
-        )
+        logger.debug(f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}")
         return None  # 성공 시 204 No Content 응답
 
     except Exception as e:
@@ -240,9 +234,7 @@ async def attach_file_to_session(
         logger.debug(f"DB 레코드 생성 완료 (Attachment ID: {attachment_id})")
     except Exception as e:
         logger.error(f"첨부파일 DB 레코드 생성 실패: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="DB record creation failed."
-        )
+        raise HTTPException(status_code=500, detail="DB record creation failed.")
 
     # Celery 워커에 인덱싱 작업을 위임합니다. API는 즉시 응답을 반환합니다.
     task = tasks.process_session_attachment_indexing.delay(
@@ -250,9 +242,7 @@ async def attach_file_to_session(
         file_path=str(file_path),
         file_name=file.filename,
     )
-    logger.info(
-        f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다."
-    )
+    logger.info(f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다.")
 
     return {
         "status": "success",
@@ -283,9 +273,7 @@ async def get_chat_sessions(
     Returns:
         schemas.ChatSessionListResponse: 채팅 세션 목록을 포함하는 응답.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다.")
     sessions = await chat_service.fetch_user_sessions(
         db_session=session, user_id=current_user.user_id
     )
@@ -350,15 +338,11 @@ async def get_user_profile(
     Returns:
         schemas.UserProfileResponse: 사용자의 프로필 텍스트를 포함하는 응답.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다.")
     profile_text = await chat_service.fetch_user_profile(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다.")
     return schemas.UserProfileResponse(profile_text=profile_text)
 
 
@@ -380,9 +364,7 @@ async def update_user_profile(
         current_user: 인증된 사용자 정보.
         session: DB 작업을 위한 비동기 세션.
     """
-    logger.info(
-        f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다."
-    )
+    logger.info(f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다.")
     await chat_service.upsert_user_profile(
         db_session=session,
         user_id=current_user.user_id,

@@ -11,10 +11,10 @@ type UseTaskPollingOptions = {
   buildStatusPath?: (taskId: string) => string;
   intervalMs?: number;
   timeoutMs?: number;
-  onSuccess?: (response: TaskStatusResponse) => void;
-  onFailure?: (response: TaskStatusResponse) => void;
-  onError?: (error: Error) => void;
-  onTimeout?: () => void;
+  onSuccess?: (response: TaskStatusResponse, taskId: string) => void;
+  onFailure?: (response: TaskStatusResponse, taskId: string) => void;
+  onError?: (error: Error, taskId: string) => void;
+  onTimeout?: (taskId: string) => void;
 };
 
 export function useTaskPolling({
@@ -47,15 +47,15 @@ export function useTaskPolling({
         if (cancelled) return;
 
         if (response.status === "SUCCESS") {
-          onSuccess?.(response);
+          onSuccess?.(response, taskId);
           setTaskId(null);
         } else if (response.status === "FAILURE") {
-          onFailure?.(response);
+          onFailure?.(response, taskId);
           setTaskId(null);
         }
       } catch (err) {
         if (cancelled) return;
-        onError?.(err instanceof Error ? err : new Error("폴링 오류"));
+        onError?.(err instanceof Error ? err : new Error("폴링 오류"), taskId);
         setTaskId(null);
       }
     };
@@ -64,7 +64,7 @@ export function useTaskPolling({
     const intervalId = setInterval(checkStatus, intervalMs);
     const timeoutId = setTimeout(() => {
       if (cancelled) return;
-      onTimeout?.();
+      onTimeout?.(taskId);
       setTaskId(null);
     }, timeoutMs);
 

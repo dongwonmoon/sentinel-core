@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import Modal from "./Modal";
 import EmptyChatWindow from "./EmptyChatWindow";
+import ToolCallWidget from "./ToolCallWidget";
 
 type Props = {
   messages: Message[];
@@ -118,17 +119,28 @@ export default function MessageList({ messages, sendMessage }: Props) {
     const node = containerRef.current;
     if (!node) return;
 
-    const handleScroll = () => {
-      const threshold = 48;
-      const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < threshold;
-      setIsAtBottom(nearBottom);
-    };
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    
+    // 1. 방금 추가된 메시지가 'user' 메시지인지 확인합니다.
+    const isNewUserMessage = lastMessage?.role === 'user' && messages.length > previousLength.current;
 
-    node.addEventListener("scroll", handleScroll);
-    handleScroll();
+    // 2. 새 메시지가 'user' 타입이면, (요청대로) 무조건 맨 아래로 스크롤합니다.
+    if (isNewUserMessage) {
+      scrollToBottom();
+      setShowJumpButton(false);
+    } 
+    // 3. 'assistant' 메시지이거나 스크롤 이벤트일 경우, 기존 로직을 따릅니다.
+    else {
+      if (isAtBottom) {
+        scrollToBottom(); // 사용자가 이미 맨 아래에 있을 때만 자동 스크롤
+        setShowJumpButton(false);
+      } else if (messages.length > previousLength.current) {
+        setShowJumpButton(true); // 사용자가 스크롤을 올렸다면, 버튼만 표시
+      }
+    }
 
-    return () => node.removeEventListener("scroll", handleScroll);
-  }, []);
+    previousLength.current = messages.length;
+  }, [messages, isAtBottom]); // 의존성 배열은 [messages, isAtBottom]을 유지합니다.
 
   // 자동 스크롤 + Jump 버튼 표시
   useEffect(() => {
@@ -214,7 +226,7 @@ export default function MessageList({ messages, sendMessage }: Props) {
                 >
                   🔄
                 </button>
-              )} */} */}
+              )} */}
 
               {/* Sources */}
               {msg.sources && msg.sources.length > 0 && (

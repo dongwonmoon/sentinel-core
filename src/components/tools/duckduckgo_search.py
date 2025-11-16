@@ -11,6 +11,18 @@ from ...core.logger import get_logger
 logger = get_logger(__name__)
 
 
+class DuckDuckGoSearchTool(DuckDuckGoSearchRun):
+    """
+    DuckDuckGo 웹 검색 도구 클래스입니다.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def to_tool_string(self) -> str:
+        return f"- {self.name}: {self.description}"
+
+
 def get_duckduckgo_search_tool() -> BaseTool:
     """
     DuckDuckGo 웹 검색 도구 인스턴스를 생성하여 반환합니다.
@@ -28,7 +40,7 @@ def get_duckduckgo_search_tool() -> BaseTool:
     try:
         # DuckDuckGoSearchRun 인스턴스를 생성합니다.
         # 이 클래스 내부적으로 DuckDuckGo Search API를 호출하는 로직이 구현되어 있습니다.
-        tool = DuckDuckGoSearchRun()
+        tool = DuckDuckGoSearchTool()
 
         # LangChain 에이전트가 이 도구를 명확하게 식별하고 선택할 수 있도록
         # `name` 속성을 시스템의 명명 규칙에 맞게 커스터마이징합니다.
@@ -42,7 +54,5 @@ def get_duckduckgo_search_tool() -> BaseTool:
         logger.info(f"'{tool.name}' 도구 초기화가 완료되었습니다.")
         return tool
     except Exception as e:
-        logger.error(
-            f"DuckDuckGo 검색 도구 초기화 중 오류 발생: {e}", exc_info=True
-        )
+        logger.error(f"DuckDuckGo 검색 도구 초기화 중 오류 발생: {e}", exc_info=True)
         raise

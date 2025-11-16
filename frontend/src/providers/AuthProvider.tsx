@@ -6,11 +6,13 @@ import {
   useState,
   ReactNode,
 } from "react";
+import { User } from "../schemas";
 
-export type AuthResult = { token: string; username: string };
+export type AuthResult = { token: string; user: User };
 
 type AuthContextValue = {
-  user: AuthResult | null;
+  user: User | null;
+  token: string | null;
   signIn: (next: AuthResult) => void;
   signOut: () => void;
 };
@@ -18,32 +20,41 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthResult | null>(() => {
-    const token = localStorage.getItem("sentinel_token");
-    const username = localStorage.getItem("sentinel_username");
-    if (!token || !username) return null;
-    return { token, username };
+  const [token, setToken] = useState<string | null>(() =>
+    localStorage.getItem("sentinel_token")
+  );
+  const [user, setUser] = useState<User | null>(() => {
+    const userJson = localStorage.getItem("sentinel_user");
+    if (!userJson) return null;
+    try {
+      return JSON.parse(userJson) as User;
+    } catch {
+      return null;
+    }
   });
 
   const signIn = useCallback((next: AuthResult) => {
     localStorage.setItem("sentinel_token", next.token);
-    localStorage.setItem("sentinel_username", next.username);
-    setUser(next);
+    localStorage.setItem("sentinel_user", JSON.stringify(next.user));
+    setToken(next.token);
+    setUser(next.user);
   }, []);
 
   const signOut = useCallback(() => {
     localStorage.removeItem("sentinel_token");
-    localStorage.removeItem("sentinel_username");
+    localStorage.removeItem("sentinel_user");
+    setToken(null);
     setUser(null);
   }, []);
 
   const value = useMemo(
     () => ({
       user,
+      token,
       signIn,
       signOut,
     }),
-    [user, signIn, signOut],
+    [user, token, signIn, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -11,8 +11,8 @@ type Props = {
 };
 
 export default function NotificationList({ notifications, onClose }: Props) {
-  const { user } = useAuth();
-  if (!user) return null;
+  const { token } = useAuth();
+  if (!token) return null;
 
   const queryClient = useQueryClient();
 
@@ -21,7 +21,7 @@ export default function NotificationList({ notifications, onClose }: Props) {
     mutationFn: (notificationId: number) =>
       apiRequest(`/notifications/${notificationId}/read`, {
         method: "POST",
-        token: user.token,
+        token: token,
         errorMessage: "알림 처리에 실패했습니다.",
       }),
     onSuccess: () => {
