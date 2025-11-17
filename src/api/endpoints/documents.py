@@ -43,9 +43,69 @@ logger = get_logger(__name__)
 
 
 @router.post(
+    "/upload-single-file",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="개별 파일 업로드 및 인덱싱 시작",
+)
+async def upload_single_file(
+    file: UploadFile = File(...),
+    permission_groups_json: str = Form('["all_users"]'),
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    _=Depends(dependencies.enforce_document_rate_limit),
+):
+    """
+    단일 파일을 업로드받아 Celery 워커에게 '백그라운드 인덱싱' 작업을 위임합니다.
+    ZIP 압축 과정을 거치지 않고, 파일명 그대로 개별 지식 소스로 등록됩니다.
+    """
+    try:
+        permission_groups = json.loads(permission_groups_json)
+        if not isinstance(permission_groups, list):
+            raise ValueError("permission_groups는 반드시 리스트 형태여야 합니다.")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"잘못된 JSON 형식의 권한 그룹입니다: {e}",
+        )
+
+    file_content_bytes = await file.read()
+    file_name = file.filename or "unknown_file.txt"
+
+    logger.info(
+        f"사용자 '{current_user.username}'로부터 단일 파일 '{file_name}' 업로드 요청 수신."
+    )
+
+    try:
+        # 2. 새로 만든 'process_single_document_indexing' 태스크 호출
+        task = tasks.process_single_document_indexing.delay(
+            file_content=file_content_bytes,
+            file_name=file_name,
+            permission_groups=permission_groups,
+            owner_user_id=current_user.user_id,
+        )
+        logger.info(
+            f"단일 파일 인덱싱 작업(Task ID: {task.id})을 Celery에 성공적으로 위임했습니다."
+        )
+
+        return {
+            "status": "success",
+            "task_id": task.id,
+            "filename": file_name,
+            "message": f"'{file_name}' 업로드 성공. 백그라운드에서 인덱싱이 시작되었습니다.",
+        }
+    except Exception as e:
+        logger.exception(
+            f"단일 파일 '{file_name}' 인덱싱 작업 위임 중 예기치 않은 오류 발생."
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"작업 위임 중 서버 오류가 발생했습니다: {e}",
+        )
+
+
+@router.post(
     "/upload-and-index",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="파일 업로드 및 인덱싱 시작",
+    summary="디렉토리/다중 파일을 ZIP으로 압축해 업로드",
 )
 async def upload_and_index_document(
     files: List[UploadFile] = File(...),
@@ -297,16 +357,23 @@ async def get_task_status(task_id: str):
     task_result = AsyncResult(task_id, app=celery_app)
 
     status = task_result.status
-    result = task_result.result
+    result_obj = task_result.result
+
+    final_result = None
 
     if status == "FAILURE":
         logger.warning(
-            f"실패한 작업({task_id})의 상태가 조회되었습니다. 결과: {result}"
+            f"실패한 작업({task_id})의 상태가 조회되었습니다. 결과: {result_obj}"
         )
         # result가 Exception 객체일 수 있으므로 안전하게 문자열로 변환합니다.
-        result = str(result)
+        final_result = str(result_obj)
+    elif status == "SUCCESS":
+        if isinstance(result_obj, dict):
+            final_result = result_obj
+        elif result_obj is not None:
+            final_result = str(result_obj)
 
-    return {"task_id": task_id, "status": status, "result": result}
+    return {"task_id": task_id, "status": status, "result": final_result}
 
 
 @router.delete(

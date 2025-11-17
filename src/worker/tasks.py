@@ -315,7 +315,12 @@ def process_session_attachment_indexing(
         raise self.retry(exc=e)
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="process_knowledge_group_indexing",
+)
 def process_document_indexing(
     self,
     file_content: bytes,
@@ -432,18 +437,26 @@ def process_document_indexing(
                 "message": "No content could be indexed from the file(s).",
             }
 
+        embedding_source_texts = [
+            chunk.metadata.get("embedding_source_text", chunk.page_content)
+            for chunk in all_chunks_to_index
+        ]
+        chunk_embeddings = vector_store.embedding_model.embed_documents(
+            embedding_source_texts
+        )
+
         # 3. 수집된 모든 청크를 벡터 저장소에 Upsert
         documents_data = [
             {
                 "doc_id": chunk.metadata["doc_id"],
                 "chunk_text": chunk.page_content,
-                "embedding": chunk.metadata["embedding_source_text"],
+                "embedding": embedding_vector,
                 "metadata": chunk.metadata,
                 "source_type": chunk.metadata["source_type"],
                 "permission_groups": permission_groups,
                 "owner_user_id": owner_user_id,
             }
-            for chunk in all_chunks_to_index
+            for chunk, embedding_vector in zip(all_chunks_to_index, chunk_embeddings)
         ]
         asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
 
@@ -456,6 +469,107 @@ def process_document_indexing(
     except Exception as e:
         logger.error(
             f"--- [Celery Task ID: {task_id}] '{file_name}' 인덱싱 중 심각한 오류 발생: {e} ---",
+            exc_info=True,
+        )
+        raise self.retry(exc=e)
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+def process_single_document_indexing(
+    self,
+    file_content: bytes,
+    file_name: str,
+    permission_groups: List[str],
+    owner_user_id: int,
+):
+    """
+    [Celery Task] (신규) 단일 파일을 인덱싱하여 '영구 지식 베이스(KB)'에 저장합니다.
+    (ZIP 압축 해제 로직이 없는 버전)
+    """
+    task_id = self.request.id
+    logger.info(
+        f"--- [Celery Task ID: {task_id}] '{file_name}' (단일 파일) 영구 인덱싱 시작 (권한: {permission_groups}, 소유자: {owner_user_id}) ---"
+    )
+
+    try:
+        components = _initialize_components_for_task()
+        vector_store = components["vector_store"]
+        fast_llm = components["fast_llm"]
+        text_splitter_default = components["text_splitter_default"]
+
+        all_chunks_to_index = []
+
+        # 1. 단일 파일 처리 (ZIP 로직 없음)
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=f"_{file_name}"
+        ) as tmp_file:
+            tmp_file.write(file_content)
+            temp_file_path = tmp_file.name
+
+        try:
+            chunks = asyncio.run(
+                _load_and_split_documents(
+                    temp_file_path,
+                    file_name,
+                    text_splitter_default,
+                    fast_llm,
+                )
+            )
+            # doc_id를 'file-upload-파일명'으로 단순하게 설정
+            doc_id = f"file-upload-{file_name}"
+            for chunk in chunks:
+                chunk.metadata.update(
+                    {
+                        "doc_id": doc_id,
+                        "source_type": "file-upload",
+                        "source": file_name,
+                    }
+                )
+            all_chunks_to_index.extend(chunks)
+        finally:
+            os.remove(temp_file_path)  # 임시 파일 삭제
+
+        if not all_chunks_to_index:
+            logger.warning(f"'{file_name}' 처리 후 인덱싱할 청크가 없습니다.")
+            return {
+                "status": "warning",
+                "message": "No content could be indexed from the file(s).",
+            }
+
+        # 2. (이전 버그 수정 적용) 임베딩 생성
+        embedding_source_texts = [
+            chunk.metadata.get("embedding_source_text", chunk.page_content)
+            for chunk in all_chunks_to_index
+        ]
+        chunk_embeddings = vector_store.embedding_model.embed_documents(
+            embedding_source_texts
+        )
+
+        # 3. 수집된 모든 청크를 벡터 저장소에 Upsert
+        documents_data = [
+            {
+                "doc_id": chunk.metadata["doc_id"],
+                "chunk_text": chunk.page_content,
+                "embedding": embedding_vector,
+                "metadata": chunk.metadata,
+                "source_type": chunk.metadata["source_type"],
+                "permission_groups": permission_groups,
+                "owner_user_id": owner_user_id,
+            }
+            for chunk, embedding_vector in zip(all_chunks_to_index, chunk_embeddings)
+        ]
+
+        asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
+
+        success_message = f"'{file_name}' (단일 파일) 처리 완료. {len(all_chunks_to_index)}개 청크를 인덱싱했습니다."
+        logger.info(
+            f"--- [Celery Task ID: {task_id}] 인덱싱 성공: {success_message} ---"
+        )
+        return {"status": "success", "message": success_message}
+
+    except Exception as e:
+        logger.error(
+            f"--- [Celery Task ID: {task_id}] '{file_name}' (단일 파일) 인덱싱 중 심각한 오류 발생: {e} ---",
             exc_info=True,
         )
         raise self.retry(exc=e)
@@ -530,17 +644,25 @@ def process_github_repo_indexing(
                 "message": "No content could be indexed from the repository.",
             }
 
+        embedding_source_texts = [
+            chunk.metadata.get("embedding_source_text", chunk.page_content)
+            for chunk in all_chunks_to_index
+        ]
+        chunk_embeddings = vector_store.embedding_model.embed_documents(
+            embedding_source_texts
+        )
+
         documents_data = [
             {
                 "doc_id": chunk.metadata["doc_id"],
                 "chunk_text": chunk.page_content,
-                "embedding": chunk.metadata["embedding_source_text"],
+                "embedding": embedding_vector,
                 "metadata": chunk.metadata,
                 "source_type": chunk.metadata["source_type"],
                 "permission_groups": permission_groups,
                 "owner_user_id": owner_user_id,
             }
-            for chunk in all_chunks_to_index
+            for chunk, embedding_vector in zip(all_chunks_to_index, chunk_embeddings)
         ]
         asyncio.run(vector_store.upsert_documents(documents_data=documents_data))
 

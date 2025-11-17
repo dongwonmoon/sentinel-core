@@ -8,6 +8,7 @@ import Modal from "./Modal";
 import { PromotionApprovalRequest } from "../schemas";
 import PanelTabs from "./PanelTabs";
 import { useTaskPolling, TaskStatusResponse } from "../hooks/useTaskPolling";
+import AddKnowledgeModal from "./AddKnowledgeModal";
 
 // (거버넌스) 관리자 승인 모달
 function ApprovalModal({
@@ -164,13 +165,27 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
   const isAdmin = useMemo(() => user.permission_groups.includes("admin"), [user]);
   const [activeTab, setActiveTab] = useState("kb_search");
 
+  const [isAddKnowledgeModalOpen, setIsAddKnowledgeModalOpen] = useState(false);
+
+  const { startPolling } = useTaskPolling({
+    token,
+    onSuccess: (response: TaskStatusResponse) => {
+      notify(extractResultMessage(response, "인덱싱 완료!"));
+      onRefresh();
+    },
+    onFailure: (response: TaskStatusResponse) =>
+      notify(extractResultMessage(response, "인덱싱 실패")),
+    onError: (err: Error) => notify(err.message),
+    onTimeout: () => notify("인덱싱 시간이 초과되었습니다."),
+  });
+
   async function handleDelete(docId: string) {
-    if (!confirm("정말 삭제하시겠습니까?")) return;
 
     if (!token) {
       notify("인증 정보가 없습니다. 다시 로그인해주세요.");
       return;
     }
+    if (!confirm("정말 삭제하시겠습니까?")) return;
     try {
       await apiRequest("/documents", {
         method: "DELETE",
@@ -202,6 +217,7 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
   }
 
   return (
+    <>
     <aside className="context-panel">
       {/* [신규] 탭 UI */}
       {TABS.length > 1 && (
@@ -215,9 +231,20 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
         <section>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3>영구 지식 베이스(KB)</h3>
-            <button className="ghost" onClick={onRefresh}>
-              새로고침
-            </button>
+            <div>
+                
+                <button
+                  className="ghost"
+                  onClick={() => setIsAddKnowledgeModalOpen(true)}
+                  style={{ marginRight: "0.5rem" }}
+                  title="새 지식 소스 추가"
+                >
+                  [+]
+                </button>
+                <button className="ghost" onClick={onRefresh} title="새로고침">
+                  새로고침
+                </button>
+              </div>
           </div>
           <p className="muted" style={{ marginTop: "-0.4rem", marginBottom: "0.5rem" }}>
             총 {documents.length}건 · {filteredDocs.length}건 표시 중
@@ -249,6 +276,19 @@ export default function ContextPanel({ documents, onRefresh, onSelectDoc }: Prop
         </div>
       )}      
     </aside>
+    {/* 6. 모달을 렌더링하고, onSuccess 시 startPolling을 호출하도록 연결합니다. */}
+      {isAddKnowledgeModalOpen && (
+        <AddKnowledgeModal
+          onClose={() => setIsAddKnowledgeModalOpen(false)}
+          onTasksSubmitted={(taskIds: string[]) => {
+            setIsAddKnowledgeModalOpen(false); // 모달 닫기
+            taskIds.forEach(taskId => {
+              startPolling(taskId);
+            });
+          }}
+        />
+      )}
+    </>
   );
 }
 
