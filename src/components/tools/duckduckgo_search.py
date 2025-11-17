@@ -54,5 +54,7 @@ def get_duckduckgo_search_tool() -> BaseTool:
         logger.info(f"'{tool.name}' 도구 초기화가 완료되었습니다.")
         return tool
     except Exception as e:
-        logger.error(f"DuckDuckGo 검색 도구 초기화 중 오류 발생: {e}", exc_info=True)
+        logger.error(
+            f"DuckDuckGo 검색 도구 초기화 중 오류 발생: {e}", exc_info=True
+        )
         raise

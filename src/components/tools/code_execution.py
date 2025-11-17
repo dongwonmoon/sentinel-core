@@ -62,7 +62,9 @@ class SafePythonREPLTool(PythonREPLTool):
         """
         cleaned = code.strip()
         if len(cleaned) > MAX_CODE_CHARS:
-            logger.warning(f"코드 길이가 최대 허용치({MAX_CODE_CHARS})를 초과했습니다.")
+            logger.warning(
+                f"코드 길이가 최대 허용치({MAX_CODE_CHARS})를 초과했습니다."
+            )
             raise ValueError("Code snippet exceeds maximum allowed length.")
 
         lowered = cleaned.lower()
@@ -91,7 +93,9 @@ class SafePythonREPLTool(PythonREPLTool):
             # 유효성 검사 실패 시, 오류 메시지를 결과로 반환하여 LLM이 문제를 인지하도록 합니다.
             return f"Validation Error: {e}"
 
-        logger.info(f"안전한 코드 실행 요청 수락 (코드 길이: {len(cleaned_code)}자)")
+        logger.info(
+            f"안전한 코드 실행 요청 수락 (코드 길이: {len(cleaned_code)}자)"
+        )
 
         try:
             # `subprocess.run`을 사용하여 안전한 샌드박스 환경에서 코드를 실행합니다.
@@ -108,7 +112,9 @@ class SafePythonREPLTool(PythonREPLTool):
             # 타임아웃 발생 시, 오류 메시지를 반환합니다.
             raise TimeoutError("Code execution timed out.") from exc
         except Exception as e:
-            logger.error(f"코드 실행 중 예기치 않은 오류 발생: {e}", exc_info=True)
+            logger.error(
+                f"코드 실행 중 예기치 않은 오류 발생: {e}", exc_info=True
+            )
             raise RuntimeError(
                 f"An unexpected error occurred during code execution: {e}"
             ) from e
@@ -136,8 +142,12 @@ def get_code_execution_tool() -> BaseTool:
     """
     try:
         tool = SafePythonREPLTool()
-        logger.info("Python REPL (Code Execution) 도구 초기화가 완료되었습니다.")
+        logger.info(
+            "Python REPL (Code Execution) 도구 초기화가 완료되었습니다."
+        )
         return tool
     except Exception as e:
-        logger.error(f"Python REPL 도구 초기화 중 오류 발생: {e}", exc_info=True)
+        logger.error(
+            f"Python REPL 도구 초기화 중 오류 발생: {e}", exc_info=True
+        )
         raise

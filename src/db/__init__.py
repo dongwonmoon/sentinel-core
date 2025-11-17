@@ -4,6 +4,11 @@
 이 패키지는 데이터베이스 연결, 세션 관리, ORM(Object-Relational Mapping) 모델 정의 등
 애플리케이션의 데이터베이스 상호작용에 필요한 모든 구성요소를 포함합니다.
 
-- models: SQLAlchemy ORM 모델을 정의합니다.
-- session: 데이터베이스 세션 생성 및 관리 로직을 포함합니다. (필요 시 추가)
+- `models.py`: SQLAlchemy의 선언적 모델링(Declarative Mapping)을 사용하여
+  애플리케이션의 데이터 구조를 파이썬 클래스로 정의합니다. 이 모델들은
+  데이터베이스의 테이블과 직접 매핑됩니다.
+
+- `session.py` (필요 시 추가): 데이터베이스 세션을 생성하고 관리하는 로직을
+  캡슐화할 수 있습니다. 현재 프로젝트에서는 `api/dependencies.py`의
+  `get_db_session`에서 세션 관리를 직접 처리하고 있습니다.
 """

@@ -63,12 +63,15 @@ def get_agent() -> Agent:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
+    logger.info(
+        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
+    )
     start_time = time.time()
 
     settings = get_settings()
 
-    # 1. 팩토리 함수를 사용하여 설정에 따라 각 컴포넌트를 생성합니다.
+    # 1. 팩토리 패턴(Factory Pattern)을 사용하여 설정(config.yml)에 따라 각 컴포넌트를 동적으로 생성합니다.
+    #    이를 통해 코드 변경 없이 설정 파일 수정만으로 사용할 LLM, 벡터 저장소 등을 교체할 수 있습니다.
     logger.debug("임베딩 모델 생성 중...")
     embedding_model = factories.create_embedding_model(
         settings.embedding, settings, settings.OPENAI_API_KEY
@@ -95,7 +98,7 @@ def get_agent() -> Agent:
     logger.debug("활성화된 도구들 가져오는 중...")
     tools = factories.get_tools(settings.tools_enabled)
 
-    # 2. 생성된 컴포넌트들을 `Agent` 클래스에 주입하여 인스턴스를 생성합니다.
+    # 2. 생성된 컴포넌트들을 `Agent` 클래스에 의존성으로 주입하여 최종 에이전트 인스턴스를 생성합니다.
     agent = Agent(
         fast_llm=fast_llm,
         powerful_llm=powerful_llm,
@@ -105,7 +108,9 @@ def get_agent() -> Agent:
     )
 
     end_time = time.time()
-    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
+    logger.info(
+        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
+    )
     return agent
 
 
@@ -114,6 +119,7 @@ def get_redis_pool() -> aioredis.ConnectionPool:
     """
     세션 저장을 위한 Redis 커넥션 풀을 생성하고 캐시합니다.
     Celery(0, 1)와 다른 DB(2)를 사용합니다.
+    커넥션 풀을 사용하면 요청마다 TCP 연결을 새로 맺고 끊는 오버헤드를 줄여 성능을 향상시킵니다.
     """
     logger.info("세션 캐시용 Redis 커넥션 풀을 생성합니다.")
     settings = get_settings()
@@ -129,15 +135,20 @@ async def get_redis_client(
 ) -> AsyncGenerator[aioredis.Redis, None]:
     """
     API 요청마다 Redis 풀에서 클라이언트를 가져오는 의존성입니다.
+    `async with` 구문을 사용하여 요청 처리가 끝나면 클라이언트가 자동으로 풀에 반환되도록 합니다.
     """
     logger.debug("Redis 풀에서 클라이언트를 가져옵니다.")
     async with aioredis.Redis(connection_pool=pool) as redis:
         try:
             yield redis
         except Exception as e:
-            logger.error(f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True)
+            logger.error(
+                f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True
+            )
             raise
         finally:
+            # `async with` 블록이 끝나면 클라이언트는 자동으로 풀에 반환되므로,
+            # 여기서는 로깅만 수행합니다.
             logger.debug("Redis 클라이언트를 풀에 반환합니다.")
 
 
@@ -165,7 +176,9 @@ async def get_db_session(
     # PgVectorStore 만이 AsyncSession 팩토리를 노출하므로, 다른 벡터 스토어가 활성화된 경우
     # 잘못된 의존성 사용을 조기에 차단한다.
     if not isinstance(vector_store, PgVectorStore):
-        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
+        logger.error(
+            "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."
+        )
         raise HTTPException(
             status_code=501,
             detail="Database session is only available when using PgVectorStore.",
@@ -182,22 +195,25 @@ async def get_db_session(
     session: AsyncSession = session_local()
     logger.debug(f"DB 세션 [ID: {id(session)}] 생성됨.")
     try:
-        # `yield`를 통해 생성된 세션을 API 경로 함수로 전달합니다.
+        # `yield` 키워드는 제너레이터의 실행을 일시 중지하고, 세션 객체를 FastAPI 경로 함수로 전달합니다.
+        # 경로 함수의 실행이 완료될 때까지 이 함수의 실행은 여기서 멈춥니다.
         yield session
-        # 경로 함수의 실행이 성공적으로 끝나면 트랜잭션을 커밋합니다.
+        # 경로 함수에서 명시적인 예외가 발생하지 않았다면, 모든 DB 변경사항을 커밋합니다.
         await session.commit()
         logger.debug(f"DB 세션 [ID: {id(session)}] 커밋됨.")
     except Exception as e:
-        # 경로 함수에서 예외가 발생하면 트랜잭션을 롤백합니다.
+        # 경로 함수 실행 중 예외가 발생하면, 현재 트랜잭션의 모든 변경사항을 롤백하여
+        # 데이터베이스의 일관성을 유지합니다.
         logger.error(
             f"DB 세션 [ID: {id(session)}]에서 예외 발생. 롤백합니다. 에러: {e}",
             exc_info=True,
         )
         await session.rollback()
-        # 발생한 예외를 다시 상위로 전달하여 FastAPI가 처리하도록 합니다.
+        # 발생한 예외를 다시 상위로 전달하여 FastAPI의 기본 예외 처리기가 처리하도록 합니다.
         raise
     finally:
-        # 성공 여부와 관계없이 항상 세션을 닫아 리소스를 반환합니다.
+        # 요청 처리의 성공/실패 여부와 관계없이, `finally` 블록은 항상 실행됩니다.
+        # 여기서 세션을 닫아 데이터베이스 커넥션을 풀에 반환하고 리소스를 정리합니다.
         await session.close()
         logger.debug(f"DB 세션 [ID: {id(session)}] 닫힘.")
 
@@ -246,13 +262,16 @@ async def get_current_user(
         )
         raise credentials_exception
 
-    # 권한 그룹을 동적으로 확장합니다 (예: it_admin -> it 권한 자동 부여).
+    # 권한 그룹을 동적으로 확장합니다. 예를 들어 'it_admin'은 'it' 그룹의 모든 권한을 가집니다.
+    # 이러한 계층적 권한 구조는 유연한 접근 제어를 가능하게 합니다.
     groups = set(user_row.permission_groups)
     if "it_admin" in groups:
         groups.add("it")
     if "hr_admin" in groups:
         groups.add("hr")
-    groups.add("all_users")  # 모든 사용자는 'all_users' 그룹에 속합니다.
+    groups.add(
+        "all_users"
+    )  # 모든 사용자는 기본적으로 'all_users' 그룹에 속합니다.
 
     user = schemas.UserInDB(**user_row._asdict())
     user.permission_groups = sorted(list(groups))
@@ -300,8 +319,11 @@ async def enforce_chat_rate_limit(
 ) -> None:
     """채팅 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
-        # `rate_limiter`는 사용자 ID를 기준으로 'chat' 유형의 요청 횟수를 확인합니다.
-        await rate_limiter.assert_within_limit("chat", str(current_user.user_id))
+        # `rate_limiter`는 Redis를 사용하여 사용자 ID별로 'chat' 유형의 요청 횟수를 추적합니다.
+        # 설정된 시간 내에 허용된 요청 횟수를 초과하면 `ValueError`를 발생시킵니다.
+        await rate_limiter.assert_within_limit(
+            "chat", str(current_user.user_id)
+        )
         logger.debug(f"사용자 '{current_user.username}'의 채팅 속도 제한 통과.")
     except ValueError as exc:
         logger.warning(
@@ -318,8 +340,13 @@ async def enforce_document_rate_limit(
 ) -> None:
     """문서 관련 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
-        await rate_limiter.assert_within_limit("documents", str(current_user.user_id))
-        logger.debug(f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과.")
+        # `rate_limiter`는 Redis를 사용하여 사용자 ID별로 'documents' 유형의 요청 횟수를 추적합니다.
+        await rate_limiter.assert_within_limit(
+            "documents", str(current_user.user_id)
+        )
+        logger.debug(
+            f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과."
+        )
     except ValueError as exc:
         logger.warning(
             f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}"

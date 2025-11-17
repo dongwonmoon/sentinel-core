@@ -164,4 +164,5 @@ Thumbs.db
 # Windows
 desktop.ini
 
-session_uploads
+session_uploads.python_files.txt
+.typescript_files.txt

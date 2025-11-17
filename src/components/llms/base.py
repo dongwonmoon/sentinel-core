@@ -82,7 +82,9 @@ class BaseLLM(ABC):
         pass
 
     @abstractmethod
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         주어진 메시지 목록을 바탕으로 LLM의 전체 응답을 한 번에 반환합니다.
 

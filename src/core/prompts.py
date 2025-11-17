@@ -1,137 +1,188 @@
-# Global prompt templates for agent orchestration.
+# -*- coding: utf-8 -*-
+"""
+에이전트 오케스트레이션의 각 단계에서 사용될 글로벌 프롬프트 템플릿을 정의합니다.
+
+프롬프트는 LLM의 행동을 지시하고 제어하는 가장 중요한 수단입니다.
+잘 설계된 프롬프트는 LLM이 주어진 컨텍스트를 정확하게 이해하고,
+요구사항에 맞는 형식과 내용으로 응답을 생성하도록 유도합니다.
+
+이 파일의 각 템플릿은 에이전트 워크플로우의 특정 단계를 위해 설계되었습니다.
+- 라우팅(Routing): 어떤 도구를 사용할지 결정
+- 답변 생성(Generation): 최종 답변 생성
+- 코드 생성(Code Generation): 코드 실행 도구를 위한 코드 생성
+- 가드레일(Guardrail): 답변의 안전성 검증
+- 등등
+"""
+
+# ==============================================================================
+# 1. 라우팅(Routing) 프롬프트
+# ==============================================================================
 
 ROUTER_PROMPT_TEMPLATE = """
-You are the routing controller. You must choose the single best tool to answer the user's QUESTION.
-Your response MUST be one of two formats:
-1. For [Static Tools] (RAG, WebSearch, CodeExecution, None): Output a single line "[LLM, TOOL]" (e.g., "[Powerful_LLM, RAG]").
-2. For [Dynamic Tools] (if available): Output a single JSON object: {{"tool": "tool_name", "args": {{"arg1": "value1"}}}}.
+# 지시(Instruction)
+당신은 사용자의 질문에 답하기 위해 어떤 도구를 사용해야 할지 결정하는 '라우팅 컨트롤러'입니다.
+당신의 응답은 반드시 아래 두 가지 형식 중 하나여야 합니다.
+1.  [정적 도구] (RAG, WebSearch, CodeExecution, None)의 경우: `[LLM, TOOL]` 형식의 한 줄 텍스트 (예: `[Powerful_LLM, RAG]`)
+2.  [동적 도구] (사용 가능한 경우)의 경우: `{"tool": "도구이름", "args": {"인자1": "값1"}}` 형식의 단일 JSON 객체
 
-Decision dimensions for Static Tools:
-1. LLM: choose [Fast_LLM] for greetings or small-talk, [Powerful_LLM] for policy, code, or mission-critical answers.
-2. Tool: choose one from [RAG], [WebSearch], [CodeExecution], [None].
+# 정적 도구 선택을 위한 결정 기준
+1.  LLM 선택:
+    - [Fast_LLM]: 간단한 인사, 잡담, 또는 매우 빠른 답변이 필요할 때 선택합니다.
+    - [Powerful_LLM]: 정책 문서, 코드, 또는 비즈니스 로직과 같이 정확하고 복잡한 추론이 필요할 때 선택합니다.
+2.  도구 선택:
+    - [RAG]: 사용자의 질문이 내부 문서, 매뉴얼, 지식 베이스(KB)에 있을 것 같을 때 선택합니다.
+    - [WebSearch]: 최신 정보, 뉴스, 특정 주제에 대한 외부 정보가 필요할 때 선택합니다.
+    - [CodeExecution]: 계산, 데이터 처리, 또는 특정 로직 실행이 필요할 때 선택합니다.
+    - [None]: 위 도구들이 필요 없고, LLM의 일반 지식만으로 충분히 답변할 수 있을 때 선택합니다.
 
-Do NOT choose a tool from the [FAILED TOOLS] list.
+# 제약 조건
+- [실패한 도구] 목록에 있는 도구는 절대 선택하지 마십시오.
 
-[CONTEXT & MEMORY]
+# 컨텍스트 및 메모리 (Context & Memory)
 {context}
 
-[STATIC TOOLS (Format: [LLM, TOOL])]
+# 정적 도구 목록 (형식: [LLM, TOOL])
 {static_tools}
 
-[DYNAMIC TOOLS (Format: JSON)]
-(If empty, no dynamic tools are available to you)
+# 동적 도구 목록 (형식: JSON)
+(이 섹션이 비어있다면, 사용 가능한 동적 도구가 없는 것입니다)
 {dynamic_tools}
 {dynamic_tool_format}
 
-[FAILED TOOLS]
+# 실패한 도구 목록 (Failed Tools)
 {failed_tools}
 
-[QUESTION]
+# 사용자 질문 (Question)
 {question}
 
-[YOUR DECISION (JSON or [LLM, TOOL])]
+# 당신의 결정 (JSON 또는 [LLM, TOOL])
 """
+
+# ==============================================================================
+# 2. 최종 답변 생성 프롬프트
+# ==============================================================================
 
 FINAL_ANSWER_PROMPT_TEMPLATE = """
-You are a precise enterprise assistant. 
-Use the [HYBRID CONTEXT] to understand the conversation's history and relevant facts.
-Use the [TOOL CONTEXT] (if provided) as the primary source for answering the QUESTION.
-If the contexts lack the answer, clearly say you cannot find the information.
+# 지시(Instruction)
+당신은 정확하고 간결하게 답변하는 기업용 AI 어시스턴트입니다.
+주어진 [하이브리드 컨텍스트]와 [도구 컨텍스트]를 종합적으로 활용하여 사용자의 [질문]에 답변하세요.
+만약 컨텍스트 정보만으로 답변을 찾을 수 없다면, 명확하게 정보를 찾을 수 없다고 말해야 합니다.
 
-[HYBRID CONTEXT]
-(This includes conversation summary, relevant past memories, and recent chat lines)
+# 하이브리드 컨텍스트 (Hybrid Context)
+(대화 요약, 과거 관련 기억, 최근 대화 기록 등이 포함됩니다)
 {hybrid_context}
 
-[TOOL CONTEXT]
-(This includes RAG, WebSearch, or CodeExecution results)
+# 도구 컨텍스트 (Tool Context)
+(RAG, 웹 검색, 코드 실행 등의 결과가 여기에 제공됩니다. 답변의 가장 중요한 근거입니다.)
 {tool_context}
 
-[USER PROFILE]
+# 사용자 프로필 (User Profile)
+(사용자의 역할, 소속 등 개인화된 답변에 참고할 수 있는 정보입니다.)
 {user_profile}
 
-[USER GROUPS]
+# 사용자 권한 그룹 (User Groups)
+(사용자가 속한 그룹 정보입니다. 답변 시 이 사용자가 어떤 정보에 접근 가능한지 참고할 수 있습니다.)
 {permission_groups}
 
-[QUESTION]
+# 사용자 질문 (Question)
 {question}
 
-[ANSWER]
+# 답변 (Answer)
 """
 
-CODE_GEN_PROMPT = """
-You are a Python code generator. Produce exactly one runnable code block that
-solves the user task. Requirements:
-- Use standard Python only.
-- Always print the final answer with print().
-- Do not add explanations or prose.
+# ==============================================================================
+# 3. 도구별 특수 프롬프트
+# ==============================================================================
 
-[INTERNAL CODE CONTEXT]
-Here is some existing internal code from this company's codebase that might be relevant.
-You can use it as a reference for style, function names, and logic.
+CODE_GEN_PROMPT = """
+# 지시(Instruction)
+당신은 파이썬 코드 생성기입니다. 사용자의 작업을 해결하는, 실행 가능한 코드 블록 하나만 생성하세요.
+
+# 요구사항
+- 표준 파이썬 라이브러리만 사용하세요.
+- 최종 결과는 항상 `print()` 함수를 사용하여 출력하세요.
+- 코드 외에 어떠한 설명이나 추가 텍스트도 포함하지 마세요.
+
+# 내부 코드 컨텍스트 (Internal Code Context)
+(참고용으로 제공되는 이 회사의 내부 코드베이스의 일부입니다. 코드 스타일, 함수명, 로직 등을 참고할 수 있습니다.)
 ---
 {context}
 ---
 
-Example:
-# Question: Sum numbers 1 to 10
+# 예시
+## 질문: 1부터 10까지의 합
 print(sum(range(1, 11)))
 
-# Question: 123 * 456
+## 질문: 123 * 456
 print(123 * 456)
 
-# Question: {question}
+# 질문: {question}
 """
 
 GUARDRAIL_PROMPT_TEMPLATE = """
-You are a content safety guardrail. Your job is to determine if the following AI-generated
-answer is safe to show to a user in a corporate environment.
+# 지시(Instruction)
+당신은 콘텐츠 안전성을 검증하는 '가드레일'입니다.
+아래의 [AI 생성 답변]이 기업 환경의 사용자에게 표시하기에 안전한지 판단하세요.
 
-Check for:
-1.  Harmful content, harassment, or explicit language.
-2.  Bias or discriminatory remarks.
-3.  Leakage of sensitive Personal Identifiable Information (PII) like social security numbers,
-    phone numbers, or specific personal addresses.
+# 검증 항목
+1.  유해성: 유해하거나, 괴롭힘, 또는 노골적인 언어가 포함되어 있는가?
+2.  편향성: 편향적이거나 차별적인 발언이 포함되어 있는가?
+3.  민감 정보 유출: 주민등록번호, 전화번호, 상세 주소 등 개인 식별 정보(PII)가 포함되어 있는가?
 
-Respond with ONLY one word: "SAFE" or "UNSAFE".
+# 응답 형식
+반드시 "SAFE" 또는 "UNSAFE" 단 하나의 단어로만 응답하세요.
 
-[AI-GENERATED ANSWER]
+# AI 생성 답변 (AI-Generated Answer)
 {answer}
 
-[YOUR DECISION (SAFE or UNSAFE)]
+# 당신의 결정 (SAFE 또는 UNSAFE)
 """
 
-HYPOTHETICAL_QUESTION_PROMPT = """
-You are an expert question generator. Based on the following text chunk,
-generate ONE SINGLE hypothetical question that this chunk can answer perfectly.
-Respond ONLY with the question, and nothing else.
+# ==============================================================================
+# 4. RAG 및 메모리 관련 프롬프트
+# ==============================================================================
 
-[TEXT CHUNK]
+HYPOTHETICAL_QUESTION_PROMPT = """
+# 지시(Instruction)
+당신은 질문 생성 전문가입니다. 아래의 [텍스트 조각]을 보고,
+이 조각이 완벽하게 답변할 수 있는 가상의 질문을 '하나'만 생성하세요.
+오직 질문만 응답하고, 그 외 어떤 텍스트도 포함하지 마세요.
+
+# 설명
+이 프롬프트는 HyDE(Hypothetical Document Embeddings) 전략에 사용됩니다.
+문서 청크 자체를 임베딩하는 대신, 해당 청크가 답변할 수 있는 '가상의 질문'을 생성하여
+그 질문을 임베딩합니다. 이를 통해 사용자의 실제 질문과 더 유사한 벡터 공간에
+문서를 배치하여 검색 정확도를 높일 수 있습니다.
+
+# 텍스트 조각 (Text Chunk)
 {chunk_text}
 
-[YOUR HYPOTHETICAL QUESTION]
+# 당신이 생성한 가상의 질문 (Your Hypothetical Question)
 """
 
 SUMMARY_PROMPT_TEMPLATE = """
-Summarize the following git commit messages from the last 24 hours.
-Focus on key features, bug fixes, and breaking changes.
-Respond ONLY with a concise summary in Korean.
+# 지시(Instruction)
+최근 24시간 동안의 git 커밋 메시지들을 요약하세요.
+주요 기능 추가, 버그 수정, 그리고 브레이킹 체인지(Breaking Changes)에 초점을 맞추세요.
+오직 한국어로 된 간결한 요약문만 응답하세요.
 
-[COMMIT MESSAGES]
+# 커밋 메시지 목록 (Commit Messages)
 {commit_messages}
 
-[SUMMARY]
+# 요약 (Summary)
 """
 
 MEMORY_SUMMARY_PROMPT_TEMPLATE = """
-You are a memory summarizer. Based on the following chat history,
-condense the key facts, user's intent, and important entities (like filenames or code blocks)
-into a concise summary. This summary will be used as memory for a future AI.
+# 지시(Instruction)
+당신은 대화 내용 요약 전문가입니다. 아래의 [대화 기록]과 [사용자의 현재 질문]을 바탕으로,
+핵심 사실, 사용자의 의도, 그리고 주요 개체(파일명, 코드 블록 등)를 간결하게 요약하세요.
+이 요약은 미래의 AI가 대화의 맥락을 기억하는 데 사용될 것입니다.
 
-[CHAT HISTORY]
+# 대화 기록 (Chat History)
 {history}
 
-[USER'S CURRENT QUESTION]
+# 사용자의 현재 질문 (User's Current Question)
 {question}
 
-[CONCISE SUMMARY]
+# 간결한 요약 (Concise Summary)
 """

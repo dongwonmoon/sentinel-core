@@ -80,7 +80,9 @@ class RequestTimingMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestTimingMiddleware)
-logger.info("요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다.")
+logger.info(
+    "요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다."
+)
 
 
 # --- 라우터(Router) 등록 ---

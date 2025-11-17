@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-핵심 애플리케이션 코드는 `src/`에 있으며, `api/`는 FastAPI 엔드포인트와 라우터, `core/`는 설정·로깅·보안 유틸, `components/`는 RAG 관련 컴포넌트, `worker/`는 Celery 진입점(`celery_app.py`)과 태스크를 담습니다. 데이터베이스 마이그레이션은 `alembic/`과 `alembic.ini`에서 관리하고, 테스트는 동일한 모듈 구조를 `tests/` 아래에 반영합니다. 샘플 문서나 임시 아티팩트는 `data/`에 두되, 배포 전 비우세요. 루트에는 `docker-compose.yml`, `run_indexing.py`, `.env.example` 등이 있으니 새 자격 증명을 추가할 때마다 예제 파일을 복사해 `.env`를 갱신하세요.
+핵심 애플리케이션 코드는 `src/`에 있으며, `api/`는 FastAPI 엔드포인트와 라우터, `core/`는 설정·로깅·보안 유틸, `components/`는 RAG 관련 컴포넌트, `worker/`는 Celery 진입점(`celery_app.py`)과 태스크를 담습니다. 데이터베이스 마이그레이션은 `alembic/`과 `alembic.ini`에서 관리하고, 테스트는 동일한 모듈 구조를 `tests/` 아래에 반영합니다. 샘플 문서나 임시 아티팩트는 `data/`에 두되, 배포 전 비우세요. 루트에는 `docker-compose.yml`, `.env.example` 등이 있으니 새 자격 증명을 추가할 때마다 예제 파일을 복사해 `.env`를 갱신하세요.
 
 ## Build, Test, and Development Commands
 - `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt` — 깨끗한 가상환경 구성.

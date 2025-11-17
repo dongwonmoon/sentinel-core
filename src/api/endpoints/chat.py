@@ -14,7 +14,10 @@ import json
 import redis.asyncio as aioredis
 import aiofiles
 import os
+import io
 from pathlib import Path
+import zipfile
+from typing import List
 
 from fastapi import (
     APIRouter,
@@ -24,6 +27,7 @@ from fastapi import (
     HTTPException,
     File,
     UploadFile,
+    Form,
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +55,8 @@ async def query_agent(
     body: schemas.QueryRequest,
     background_tasks: BackgroundTasks,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    # `enforce_chat_rate_limit` 의존성은 반환값이 없으며, 오직 속도 제한을 강제하는 목적으로만 사용됩니다.
+    # 따라서 반환값을 무시하기 위해 변수 이름을 `_`로 지정합니다.
     _: None = Depends(dependencies.enforce_chat_rate_limit),
     agent: Agent = Depends(dependencies.get_agent),
     db_session: AsyncSession = Depends(dependencies.get_db_session),
@@ -82,8 +88,7 @@ async def query_agent(
     )
 
     try:
-        # 에이전트(LangGraph)의 입력으로 사용될 딕셔너리를 구성합니다.
-        # Redis의 세션 상태, DB의 대화 기록, 사용자 정보 등을 모두 결합합니다.
+        # LangGraph state는 Redis 세션 컨텍스트, DB 히스토리, 사용자 프로필을 한꺼번에 모아 만든다.
         inputs = await chat_service.build_stateful_agent_inputs(
             redis=redis,
             db_session=db_session,
@@ -103,10 +108,11 @@ async def query_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to build agent context.",
         )
-    logger.debug(f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료.")
+    logger.debug(
+        f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료."
+    )
 
-    # `chat_service.stream_agent_response`는 비동기 제너레이터(Async Generator)를 반환합니다.
-    # FastAPI는 이 제너레이터로부터 생성되는 데이터 조각들을 클라이언트로 스트리밍합니다.
+    # generator에서 발생한 이벤트를 그대로 SSE로 흘려보낸다.
     response_generator = chat_service.stream_agent_response(
         agent=agent,
         inputs=inputs,
@@ -146,15 +152,20 @@ async def update_session_context(
     session_key = f"session_context:{session_id}"
 
     try:
-        # 기존 컨텍스트를 읽어와서, 새로운 필터 정보로 덮어쓰거나 추가합니다.
+        # 세션 컨텍스트는 자주 변경될 수 있고 영속성이 중요하지 않으므로,
+        # 빠른 읽기/쓰기가 가능한 Redis를 사용하는 것이 DB보다 효율적입니다.
         existing_context_raw = await redis.get(session_key)
-        context = json.loads(existing_context_raw) if existing_context_raw else {}
+        context = (
+            json.loads(existing_context_raw) if existing_context_raw else {}
+        )
         context["doc_ids_filter"] = body.doc_ids_filter
 
         # 업데이트된 컨텍스트를 Redis에 24시간 만료 시간으로 저장합니다.
         await redis.set(session_key, json.dumps(context), ex=86400)
 
-        logger.debug(f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}")
+        logger.debug(
+            f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}"
+        )
         return None  # 성공 시 204 No Content 응답
 
     except Exception as e:
@@ -204,12 +215,14 @@ async def attach_file_to_session(
     safe_dir = SESSION_UPLOAD_DIR / str(current_user.user_id) / session_id
     safe_dir.mkdir(parents=True, exist_ok=True)
 
-    # [보안] 경로 탐색 공격(Path Traversal)을 방지하기 위해 파일 이름에서 디렉터리 부분을 제거합니다.
+    # [보안] 경로 탐색 공격(Path Traversal, e.g., '../../etc/passwd')을 방지하기 위해
+    # 파일 이름에서 디렉터리 부분을 제거하고 순수 파일명만 사용합니다.
     safe_filename = Path(file.filename).name
     file_path = safe_dir / safe_filename
 
     try:
         # 대용량 파일을 효율적으로 처리하기 위해 1MB씩 비동기적으로 읽고 씁니다.
+        # 이는 서버 메모리를 한 번에 모두 소진하는 것을 방지합니다.
         async with aiofiles.open(file_path, "wb") as f:
             while content := await file.read(1024 * 1024):
                 await f.write(content)
@@ -220,6 +233,7 @@ async def attach_file_to_session(
 
     try:
         # DB에 'session_attachments' 레코드를 생성하여 파일 정보를 관리합니다.
+        # 이 레코드는 파일의 상태(indexing, temporary, promoted)를 추적하는 데 사용됩니다.
         new_attachment = models.SessionAttachment(
             session_id=session_id,
             user_id=current_user.user_id,
@@ -234,22 +248,123 @@ async def attach_file_to_session(
         logger.debug(f"DB 레코드 생성 완료 (Attachment ID: {attachment_id})")
     except Exception as e:
         logger.error(f"첨부파일 DB 레코드 생성 실패: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="DB record creation failed.")
+        raise HTTPException(
+            status_code=500, detail="DB record creation failed."
+        )
 
-    # Celery 워커에 인덱싱 작업을 위임합니다. API는 즉시 응답을 반환합니다.
+    # 시간이 오래 걸리는 인덱싱 작업을 Celery 워커에게 위임하고, API는 즉시 응답합니다.
+    # 이를 통해 클라이언트는 긴 시간 동안 응답을 기다릴 필요가 없습니다.
     task = tasks.process_session_attachment_indexing.delay(
         attachment_id=attachment_id,
         file_path=str(file_path),
         file_name=file.filename,
     )
-    logger.info(f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다.")
+    logger.info(
+        f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다."
+    )
 
     return {
         "status": "success",
         "task_id": task.id,
         "attachment_id": attachment_id,
         "filename": file.filename,
+        "attachment_status": new_attachment.status,
         "message": f"'{file.filename}' 파일이 첨부되었으며, 백그라운드 인덱싱이 시작되었습니다.",
+    }
+
+
+@router.post(
+    "/sessions/{session_id}/attach-github",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="[신규] 세션에 GitHub 리포지토리 첨부",
+)
+async def attach_github_to_session(
+    session_id: str,
+    body: schemas.GitHubRepoRequest,
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """GitHub 리포지토리를 세션에 첨부하고 인덱싱을 시작합니다."""
+    repo_name = body.repo_url.path.split("/")[-1].replace(".git", "")
+    logger.info(
+        f"세션 '{session_id}'에 GitHub 리포지토리 '{repo_name}' 첨부 시도."
+    )
+
+    # 1. DB 레코드 생성
+    attachment = await chat_service.create_session_attachment(
+        db_session,
+        session_id,
+        current_user.user_id,
+        f"GitHub: {repo_name}",
+        str(body.repo_url),
+        "indexing",
+    )
+
+    # 2. API 서버는 리포지토리를 직접 클론하지 않고, Celery 워커에게 URL만 전달합니다.
+    #    무거운 클론 및 인덱싱 작업은 워커 프로세스가 전담하도록 하여 API 서버의 부하를 줄입니다.
+    task = tasks.process_session_github_indexing.delay(
+        attachment_id=attachment.attachment_id, repo_url=str(body.repo_url)
+    )
+
+    return {
+        "status": "success",
+        "task_id": task.id,
+        "attachment_id": attachment.attachment_id,
+        "filename": attachment.file_name,
+        "attachment_status": attachment.status,
+    }
+
+
+@router.post(
+    "/sessions/{session_id}/attach-directory",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="[신규] 세션에 로컬 디렉토리(ZIP) 첨부",
+)
+async def attach_directory_to_session(
+    session_id: str,
+    files: List[UploadFile] = File(...),
+    display_name: str = Form(...),
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """로컬 디렉토리 파일들을 ZIP으로 압축받아 세션에 첨부하고 인덱싱합니다."""
+    logger.info(
+        f"세션 '{session_id}'에 로컬 디렉토리 '{display_name}' ({len(files)}개) 첨부 시도."
+    )
+
+    # 1. 브라우저에서 전송된 여러 파일을 서버의 파일 시스템에 저장하지 않고,
+    #    메모리 내에서 직접 ZIP 파일로 압축합니다. 이는 디스크 I/O를 줄여 성능을 향상시킵니다.
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in files:
+            file_path = file.filename or "unknown_file"
+            file_content = await file.read()
+            zf.writestr(file_path, file_content)
+    zip_content_bytes = zip_buffer.getvalue()
+
+    # 2. DB 레코드 생성
+    attachment = await chat_service.create_session_attachment(
+        db_session,
+        session_id,
+        current_user.user_id,
+        f"Dir: {display_name}",
+        f"in-memory-zip:{display_name}",  # 파일 경로는 메모리 내 ZIP임을 명시
+        "indexing",
+    )
+
+    # 3. 압축된 ZIP 파일의 바이트(bytes)를 직접 Celery 워커에게 전달하여 인덱싱을 위임합니다.
+    task = tasks.process_session_directory_indexing.delay(
+        attachment_id=attachment.attachment_id,
+        zip_content=zip_content_bytes,
+        display_name=display_name,
+    )
+
+    return {
+        "status": "success",
+        "task_id": task.id,
+        "attachment_id": attachment.attachment_id,
+        "filename": attachment.file_name,
+        "attachment_status": attachment.status,
     }
 
 
@@ -273,7 +388,9 @@ async def get_chat_sessions(
     Returns:
         schemas.ChatSessionListResponse: 채팅 세션 목록을 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다."
+    )
     sessions = await chat_service.fetch_user_sessions(
         db_session=session, user_id=current_user.user_id
     )
@@ -318,6 +435,30 @@ async def get_chat_history(
 
 
 @router.get(
+    "/sessions/{session_id}/attachments",
+    response_model=schemas.SessionAttachmentListResponse,
+    summary="특정 세션의 첨부파일 목록 조회",
+)
+async def get_session_attachments(
+    session_id: str,
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    session: AsyncSession = Depends(dependencies.get_db_session),
+) -> schemas.SessionAttachmentListResponse:
+    """
+    지정한 세션의 임시 첨부파일 목록과 상태를 반환합니다.
+    """
+    logger.info(
+        f"사용자 '{current_user.username}'가 세션 '{session_id}'의 첨부 목록 조회를 요청했습니다."
+    )
+    # 첨부 파일의 상태(예: 'indexing', 'temporary')는 Celery 워커에 의해 비동기적으로 업데이트되므로,
+    # 이 엔드포인트는 현재 데이터베이스의 스냅샷을 그대로 클라이언트에 노출합니다.
+    attachments = await chat_service.fetch_session_attachments(
+        db_session=session, user_id=current_user.user_id, session_id=session_id
+    )
+    return schemas.SessionAttachmentListResponse(attachments=attachments)
+
+
+@router.get(
     "/profile",
     response_model=schemas.UserProfileResponse,
     summary="사용자 프로필 조회",
@@ -338,11 +479,15 @@ async def get_user_profile(
     Returns:
         schemas.UserProfileResponse: 사용자의 프로필 텍스트를 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다."
+    )
     profile_text = await chat_service.fetch_user_profile(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다."
+    )
     return schemas.UserProfileResponse(profile_text=profile_text)
 
 
@@ -364,7 +509,9 @@ async def update_user_profile(
         current_user: 인증된 사용자 정보.
         session: DB 작업을 위한 비동기 세션.
     """
-    logger.info(f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다."
+    )
     await chat_service.upsert_user_profile(
         db_session=session,
         user_id=current_user.user_id,
@@ -375,3 +522,63 @@ async def update_user_profile(
     )
     # HTTP 204 응답은 본문(body)을 포함하지 않으므로, 아무것도 반환하지 않습니다.
     return None
+
+
+@router.delete(
+    "/sessions/{session_id}/attach/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_session_attachment(
+    session_id: str,
+    attachment_id: int,
+    current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
+):
+    """현재 세션에서 특정 임시 첨부파일을 삭제합니다."""
+    logger.info(
+        f"사용자 '{current_user.username}'가 세션 '{session_id}'의 첨부파일 ID {attachment_id} 삭제 시도."
+    )
+
+    # 1. DB에서 삭제할 첨부파일 레코드를 조회합니다.
+    attachment = await db_session.get(models.SessionAttachment, attachment_id)
+
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+
+    # 2. [보안] 요청한 사용자가 해당 첨부파일의 소유자인지, 그리고 올바른 세션에 속해 있는지 확인합니다.
+    #    이를 통해 다른 사용자의 파일을 삭제하는 것을 방지합니다.
+    if (
+        attachment.user_id != current_user.user_id
+        or attachment.session_id != session_id
+    ):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to delete this attachment."
+        )
+
+    try:
+        # 3. DB 레코드 삭제. `session_attachment_chunks` 테이블의 관련 청크들은
+        #    DB의 외래 키 제약 조건(ON DELETE CASCADE)에 의해 자동으로 함께 삭제됩니다.
+        await db_session.delete(attachment)
+        await db_session.commit()
+
+        # 4. (선택적) 실제 파일 시스템에 저장된 물리적 파일을 삭제합니다.
+        #    GitHub 리포지토리처럼 외부 URL을 참조하는 경우는 삭제 대상에서 제외합니다.
+        if attachment.file_path and "github.com" not in attachment.file_path:
+            try:
+                file_to_delete = Path(attachment.file_path)
+                if file_to_delete.exists():
+                    os.remove(file_to_delete)
+                    logger.debug(f"로컬 파일 삭제 완료: {attachment.file_path}")
+            except Exception as e:
+                # 물리적 파일 삭제에 실패하더라도 DB 레코드는 이미 삭제되었으므로,
+                # 오류를 로깅만 하고 작업을 계속 진행합니다.
+                logger.warning(f"로컬 파일 삭제 실패 (DB 레코드는 삭제됨): {e}")
+
+    except Exception as e:
+        await db_session.rollback()
+        logger.error(f"첨부파일 DB 삭제 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to delete attachment record."
+        )
+
+    return None  # 204 No Content

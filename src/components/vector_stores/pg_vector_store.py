@@ -40,6 +40,9 @@ class PgVectorStore(BaseVectorStore):
         try:
             # SQLAlchemy를 사용하여 비동기 데이터베이스 엔진을 생성합니다.
             # 이 엔진은 커넥션 풀을 관리하며, DB와 비동기적으로 통신합니다.
+            # pool_pre_ping=True: 커넥션 풀에서 연결을 가져올 때마다 간단한 쿼리를 보내
+            # 해당 연결이 유효한지 확인합니다. 이는 DB 연결이 끊어진 경우(예: 네트워크 문제, DB 재시작)
+            # 발생할 수 있는 오류를 사전에 방지하여 안정성을 높입니다.
             self.engine = create_async_engine(
                 settings.DATABASE_URL, pool_pre_ping=True
             )
@@ -104,6 +107,9 @@ class PgVectorStore(BaseVectorStore):
                         for d in documents_data
                     }
 
+                    # PostgreSQL의 'INSERT ... ON CONFLICT ... DO UPDATE' 구문을 사용하여
+                    # 원자적인(atomic) Upsert 연산을 수행합니다. 이는 경쟁 조건(race condition)을 방지합니다.
+                    # EXCLUDED는 INSERT 하려던 새로운 행의 값을 참조합니다.
                     stmt_docs_upsert = text(
                         """
                         INSERT INTO documents (doc_id, source_type, permission_groups, metadata, owner_user_id)
@@ -124,6 +130,7 @@ class PgVectorStore(BaseVectorStore):
                     )
 
                     # 2. `document_chunks` 테이블에서 기존 청크 삭제
+                    # 새로운 청크를 삽입하기 전에, 이전 버전의 청크들을 모두 삭제하여 데이터 정합성을 유지합니다.
                     stmt_chunks_delete = text(
                         "DELETE FROM document_chunks WHERE doc_id = ANY(:doc_ids)"
                     )
@@ -139,7 +146,9 @@ class PgVectorStore(BaseVectorStore):
                         {
                             "doc_id": d["doc_id"],
                             "chunk_text": d["chunk_text"],
-                            "embedding": str(d["embedding"]),
+                            "embedding": str(
+                                d["embedding"]
+                            ),  # pgvector는 벡터를 문자열 형태로 받습니다.
                             "metadata": json.dumps(d.get("metadata", {})),
                         }
                         for d in documents_data
@@ -165,7 +174,8 @@ class PgVectorStore(BaseVectorStore):
                         f"PgVectorStore Upsert 중 오류 발생! 트랜잭션이 롤백됩니다. 오류: {e}",
                         exc_info=True,
                     )
-                    # session.begin() 컨텍스트 관리자가 자동으로 롤백을 처리합니다.
+                    # `async with session.begin():` 블록 내에서 예외가 발생하면,
+                    # 컨텍스트 관리자가 자동으로 트랜잭션을 롤백합니다.
                     raise
 
     async def search(
@@ -188,15 +198,18 @@ class PgVectorStore(BaseVectorStore):
         Returns:
             List[Dict[str, Any]]: 검색된 문서 청크 정보의 리스트.
         """
-        # asyncpg는 배열 타입에 대한 prepared statement를 덜 최적화하므로 문자열 캐스팅 후 SQL로 넘긴다.
+        # asyncpg는 배열 타입에 대한 prepared statement를 덜 최적화하므로,
+        # 벡터를 문자열로 캐스팅하여 SQL 쿼리에 직접 주입합니다.
         query_vec_str = str(query_embedding)
         logger.debug(
             f"벡터 검색 시작. k={k}, 허용 그룹: {allowed_groups}, 문서 필터: {doc_ids_filter}"
         )
 
-        # documents/document_chunks를 조인하면서
-        #  - ARRAY && 연산자로 사용자 권한과 문서 권한의 교집합을 확인하고
-        #  - pgvector의 `<->` 연산자로 코사인 거리를 계산한다.
+        # CTE(Common Table Expression)를 사용하여 쿼리를 구성합니다.
+        # 1. `documents`와 `document_chunks` 테이블을 조인합니다.
+        # 2. `&&` 연산자(배열 교차)를 사용하여 사용자의 `allowed_groups`와 문서의 `permission_groups`가 하나라도 겹치는지 확인합니다.
+        # 3. `doc_ids_filter`가 있으면 해당 문서들로 범위를 좁힙니다.
+        # 4. pgvector의 `<->` 연산자(코사인 거리)를 사용하여 쿼리 임베딩과 각 청크 임베딩 사이의 거리를 계산하고 정렬합니다.
         sql_query = """
             WITH relevant_chunks AS (
                 SELECT 
@@ -235,7 +248,8 @@ class PgVectorStore(BaseVectorStore):
                         if isinstance(row.metadata, str)
                         else row.metadata
                     ),
-                    "score": 1 - row.distance,  # 거리를 유사도 점수(0~1)로 변환
+                    "score": 1
+                    - row.distance,  # 코사인 거리를 유사도 점수(0~1)로 변환합니다. (0: 다름, 1: 같음)
                 }
                 for row in result
             ]
@@ -262,7 +276,8 @@ class PgVectorStore(BaseVectorStore):
             f"세션 첨부파일(임시) 벡터 검색 시작. k={k}, session_id: {session_id}"
         )
 
-        # `session_attachment_chunks` 테이블을 검색
+        # `session_attachment_chunks`와 `session_attachments` 테이블을 조인하여
+        # 주어진 `session_id`에 속하고, 상태가 'temporary'(인덱싱 완료)인 청크만 검색 대상으로 합니다.
         sql_query = """
             SELECT 
                 c.chunk_id,
@@ -327,10 +342,12 @@ class PgVectorStore(BaseVectorStore):
 
         async with self.AsyncSessionLocal() as session:
             async with session.begin():
+                # `ANY` 연산자를 사용하여 여러 문서 ID를 한 번의 쿼리로 효율적으로 처리합니다.
                 stmt = text(
                     "DELETE FROM documents WHERE doc_id = ANY(:doc_ids)"
                 )
                 result = await session.execute(stmt, {"doc_ids": doc_ids})
+                # `rowcount`는 이 실행으로 인해 영향을 받은(삭제된) 행의 수를 반환합니다.
                 deleted_count = result.rowcount
 
         logger.info(

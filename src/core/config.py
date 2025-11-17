@@ -43,7 +43,9 @@ def get_settings() -> "Settings":
     start_time = time.time()
     settings = Settings()
     end_time = time.time()
-    logger.info(f"설정 객체 초기화 완료. (소요 시간: {end_time - start_time:.4f}초)")
+    logger.info(
+        f"설정 객체 초기화 완료. (소요 시간: {end_time - start_time:.4f}초)"
+    )
 
     # 데이터베이스 URL과 같은 주요 설정 값의 일부를 마스킹하여 로그에 출력
     # 실제 운영 환경에서는 더 정교한 마스킹 처리가 필요할 수 있습니다.
@@ -51,7 +53,9 @@ def get_settings() -> "Settings":
         f"로드된 데이터베이스 호스트: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}"
     )
     logger.debug(f"로드된 LLM 제공자 (Fast): {settings.llm.fast.provider}")
-    logger.debug(f"로드된 LLM 제공자 (Powerful): {settings.llm.powerful.provider}")
+    logger.debug(
+        f"로드된 LLM 제공자 (Powerful): {settings.llm.powerful.provider}"
+    )
     return settings
 
 
@@ -77,7 +81,9 @@ def yaml_config_settings_source() -> dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             yaml_content = yaml.safe_load(f)
             if yaml_content:
-                logger.info(f"'config.yml' 파일에서 설정을 성공적으로 로드했습니다.")
+                logger.info(
+                    f"'config.yml' 파일에서 설정을 성공적으로 로드했습니다."
+                )
                 return yaml_content
             else:
                 logger.warning(f"'config.yml' 파일이 비어 있습니다.")
@@ -94,7 +100,9 @@ def yaml_config_settings_source() -> dict[str, Any]:
 class AppSettings(BaseModel):
     """애플리케이션 기본 정보 및 로깅 설정"""
 
-    title: str = Field("Sentinel RAG System", description="애플리케이션의 공식 명칭")
+    title: str = Field(
+        "Sentinel RAG System", description="애플리케이션의 공식 명칭"
+    )
     description: str = Field(
         "Enterprise-grade RAG system with advanced capabilities.",
         description="애플리케이션에 대한 간략한 설명",
@@ -114,7 +122,9 @@ class LLMSettings(BaseModel):
     provider: Literal["ollama", "openai", "anthropic"] = Field(
         ..., description="LLM 제공자 (예: 'ollama', 'openai')"
     )
-    model_name: str = Field(..., description="사용할 LLM의 모델명 (예: 'gemma2:9b')")
+    model_name: str = Field(
+        ..., description="사용할 LLM의 모델명 (예: 'gemma2:9b')"
+    )
     api_base: Optional[str] = Field(
         None,
         description="LLM API의 기본 URL (Ollama 또는 자체 호스팅 모델에 필요)",
@@ -154,8 +164,12 @@ class VectorStoreSettings(BaseModel):
     provider: Literal["pg_vector", "milvus"] = Field(
         ..., description="사용할 벡터 저장소 종류"
     )
-    milvus_host: Optional[str] = Field(None, description="Milvus 사용 시 호스트 주소")
-    milvus_port: Optional[int] = Field(None, description="Milvus 사용 시 포트 번호")
+    milvus_host: Optional[str] = Field(
+        None, description="Milvus 사용 시 호스트 주소"
+    )
+    milvus_port: Optional[int] = Field(
+        None, description="Milvus 사용 시 포트 번호"
+    )
 
 
 class RerankerSettings(BaseModel):
@@ -164,7 +178,9 @@ class RerankerSettings(BaseModel):
     provider: Literal["none", "cohere", "cross_encoder"] = Field(
         ..., description="사용할 리랭커 종류 ('none'으로 비활성화)"
     )
-    model_name: Optional[str] = Field(None, description="Cross Encoder 사용 시 모델명")
+    model_name: Optional[str] = Field(
+        None, description="Cross Encoder 사용 시 모델명"
+    )
 
 
 # --- 3. 메인 Settings 클래스 ---
@@ -184,7 +200,9 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = Field(..., description="PostgreSQL 사용자 이름")
     POSTGRES_PASSWORD: str = Field(..., description="PostgreSQL 비밀번호")
     POSTGRES_DB: str = Field(..., description="PostgreSQL 데이터베이스 이름")
-    POSTGRES_HOST: str = Field("localhost", description="PostgreSQL 호스트 주소")
+    POSTGRES_HOST: str = Field(
+        "localhost", description="PostgreSQL 호스트 주소"
+    )
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL 포트 번호")
 
     # Redis 연결 정보 (Celery 브로커 및 결과 백엔드용)
@@ -204,11 +222,15 @@ class Settings(BaseSettings):
     # 외부 서비스 API 키 (선택 사항)
     # 필요한 서비스의 API 키만 .env 파일에 추가하여 사용합니다.
     OPENAI_API_KEY: Optional[str] = Field(None, description="OpenAI API 키")
-    ANTHROPIC_API_KEY: Optional[str] = Field(None, description="Anthropic API 키")
+    ANTHROPIC_API_KEY: Optional[str] = Field(
+        None, description="Anthropic API 키"
+    )
     COHERE_API_KEY: Optional[str] = Field(
         None, description="Cohere API 키 (Reranker용)"
     )
-    GOOGLE_API_KEY: Optional[str] = Field(None, description="Google API 키 (검색용)")
+    GOOGLE_API_KEY: Optional[str] = Field(
+        None, description="Google API 키 (검색용)"
+    )
     GOOGLE_CSE_ID: Optional[str] = Field(
         None, description="Google Custom Search Engine ID"
     )
@@ -219,13 +241,19 @@ class Settings(BaseSettings):
     )
 
     # Ollama API 기본 URL (docker-compose 등에서 주입)
-    OLLAMA_BASE_URL: Optional[str] = Field(None, description="Ollama 서비스의 기본 URL")
+    OLLAMA_BASE_URL: Optional[str] = Field(
+        None, description="Ollama 서비스의 기본 URL"
+    )
 
     # --- config.yml 또는 기본값으로 관리되는 구조화된 설정 ---
-    app: AppSettings = Field(default_factory=AppSettings, description="앱 일반 설정")
+    app: AppSettings = Field(
+        default_factory=AppSettings, description="앱 일반 설정"
+    )
     llm: LLMGroup = Field(..., description="LLM 그룹 설정")
     embedding: EmbeddingSettings = Field(..., description="임베딩 모델 설정")
-    vector_store: VectorStoreSettings = Field(..., description="벡터 저장소 설정")
+    vector_store: VectorStoreSettings = Field(
+        ..., description="벡터 저장소 설정"
+    )
     reranker: RerankerSettings = Field(..., description="리랭커 설정")
     tools_enabled: List[
         Literal["duckduckgo_search", "google_search", "code_execution"]
@@ -325,8 +353,12 @@ if __name__ == "__main__":
     print("\n[LLM Settings]")
     print(f"  - Fast LLM Provider: {settings_instance.llm.fast.provider}")
     print(f"  - Fast LLM Model: {settings_instance.llm.fast.model_name}")
-    print(f"  - Powerful LLM Provider: {settings_instance.llm.powerful.provider}")
-    print(f"  - Powerful LLM Model: {settings_instance.llm.powerful.model_name}")
+    print(
+        f"  - Powerful LLM Provider: {settings_instance.llm.powerful.provider}"
+    )
+    print(
+        f"  - Powerful LLM Model: {settings_instance.llm.powerful.model_name}"
+    )
 
     print("\n[Database Settings]")
     # 보안을 위해 비밀번호는 제외하고 주요 연결 정보만 출력합니다.

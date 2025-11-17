@@ -3,59 +3,88 @@
  * @description 이 훅은 채팅 UI의 "두뇌" 역할을 하며, 메시지 목록 관리,
  * 대화 기록 로딩, 파일 첨부, 서버와의 실시간 스트리밍 통신 등
  * 채팅과 관련된 모든 복잡한 상호작용을 캡슐화합니다.
+ * `useChatSession`은 특정 `sessionId`에 대한 모든 것을 책임지는 고수준 추상화입니다.
  */
 
 import { useCallback, useRef, useState, useEffect } from "react";
 import { notify } from "../components/NotificationHost";
 import { apiRequest } from "../lib/apiClient";
 import { getApiBaseUrl } from "./useEnvironment";
-import { useTaskPolling, TaskStatusResponse } from "./useTaskPolling";
 
 const API_BASE = getApiBaseUrl();
 
+// --- 타입 정의 (Type Definitions) ---
+
 /**
- * 채팅 메시지 하나를 나타내는 타입.
- * UI 렌더링에 필요한 모든 정보를 포함합니다.
+ * 채팅 UI에 표시되는 단일 메시지를 나타내는 타입입니다.
+ * 백엔드에서 받은 데이터를 프론트엔드 렌더링에 맞게 가공한 형태입니다.
  */
 export type Message = {
-  /** React 리스트 렌더링 시 key로 사용될 고유 ID */
+  /** React 리스트 렌더링 시 `key`로 사용될 고유 ID */
   id: string;
   /** 메시지 작성 주체 ('user' 또는 'assistant') */
   role: "user" | "assistant";
-  /** 메시지의 텍스트 내용 */
+  /** 메시지의 텍스트 내용 (Markdown 형식일 수 있음) */
   content: string;
-  /** RAG 사용 시 참조한 소스 문서 정보 */
+  /**
+   * (RAG 사용 시) AI 답변의 근거가 된 출처(Source) 문서 정보.
+   * 이 정보가 있으면 UI에 출처 알약(pill)이 표시됩니다.
+   */
   sources?: { display_name: string }[];
-  /** 어시스턴트가 도구를 사용하는 과정을 시각화하기 위한 정보 */
+  /**
+   * AI가 도구를 사용하는 과정을 시각화하기 위한 정보.
+   * 이 객체가 존재하면, 메시지 버블에 일반 텍스트 대신 `ToolCallWidget`이 렌더링됩니다.
+   */
   toolCall?: {
-    /** 실행된 도구의 이름 (예: 'RAG', 'WebSearch') */
+    /** 실행된 도구의 이름 (예: 'run_rag_tool', 'run_web_search_tool') */
     name: string;
     /** 도구 실행 상태 ('running': 실행 중, 'completed': 완료) */
     status: "running" | "completed";
   };
 };
 
-/** 백엔드 API에서 사용하는 대화 기록 메시지 타입 */
+/** 백엔드 `/chat/history/{session_id}` API 응답의 개별 메시지 타입입니다. */
 type ApiHistoryMessage = {
   role: "user" | "assistant";
   content: string;
   created_at: string;
 };
 
+/** 파일/디렉토리/저장소 첨부 API의 공통 응답 타입입니다. */
+type AttachmentUploadResponse = {
+  task_id: string;
+  attachment_id: number;
+  filename?: string;
+  attachment_status?: string;
+};
+
+/** 백엔드 `/chat/sessions/{session_id}/attachments` API 응답의 개별 첨부파일 타입입니다. */
+type ApiSessionAttachment = {
+  attachment_id: number;
+  file_name: string;
+  status: string;
+  created_at: string;
+};
+
 /**
- * 현재 세션에 임시로 첨부된 파일의 상태를 나타내는 타입.
+ * 프론트엔드에서 관리하는 세션 첨부 파일의 상태를 나타내는 타입입니다.
+ * 낙관적 UI 업데이트를 위해 `task_id`를 포함할 수 있습니다.
  */
 export type SessionAttachment = {
-  /** DB에 저장된 첨부파일의 고유 ID */
+  /** DB에 저장된 첨부파일의 고유 ID. 아직 생성 전이면 0일 수 있습니다. */
   attachment_id: number;
   user_id?: number;
   /** 원본 파일 이름 */
   filename: string;
-  /** 파일의 현재 상태 (인덱싱 중, 임시 사용 가능, 승인 대기 등) */
+  /** 파일의 현재 상태 (인덱싱 중, 임시 사용 가능, 실패 등) */
   status: "indexing" | "temporary" | "pending_review" | "promoted" | "failed";
-  /** 백그라운드 인덱싱 작업의 상태를 폴링하기 위한 Celery 태스크 ID */
-  task_id: string;
-  /** (거버넌스) 영구 KB로 승격 요청 시 사용자가 입력한 메타데이터 */
+  /**
+   * 백그라운드 인덱싱 작업의 상태를 추적하기 위한 ID.
+   * 초기 업로드 시에는 임시 ID(`temp-id-...`)가 사용되고,
+   * 서버 응답 후 실제 Celery 태스크 ID로 교체됩니다.
+   */
+  task_id?: string;
+  /** (거버넌스 기능) 영구 KB로 승격 요청 시 사용자가 입력한 메타데이터 */
   pending_review_metadata?: {
     suggested_kb_doc_id: string;
     note_to_admin: string;
@@ -69,17 +98,60 @@ export type SessionAttachment = {
  * @param sessionId - 현재 활성화된 채팅 세션의 ID. `null`일 경우 새 대화 상태를 의미합니다.
  * @returns 채팅 UI를 렌더링하고 상호작용하는 데 필요한 모든 상태와 함수.
  */
+/**
+ * 단일 채팅 세션의 전체 상태와 로직을 관리하는 핵심 React Hook입니다.
+ *
+ * @param token - 인증에 사용될 JWT 토큰.
+ * @param sessionId - 현재 활성화된 채팅 세션의 ID. `null`일 경우 새 대화 상태를 의미합니다.
+ * @returns 채팅 UI를 렌더링하고 상호작용하는 데 필요한 모든 상태와 함수.
+ */
 export function useChatSession(token: string, sessionId: string | null) {
+  // --- 상태 관리 (State Management) ---
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [attachments, setAttachments] = useState<SessionAttachment[]>([]);
   // 스트리밍 요청을 중간에 취소하기 위한 AbortController 참조.
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // sessionId가 변경될 때마다 실행되는 Effect.
-  // 새로운 세션으로 전환될 때 이전 상태를 정리하고 새 대화 기록을 불러옵니다.
+  /**
+   * 현재 세션의 첨부 파일 목록을 서버로부터 다시 가져와 상태를 업데이트합니다.
+   * `useCallback`으로 감싸 `sessionId`나 `token`이 변경되지 않는 한 함수가 재생성되지 않도록 합니다.
+   */
+  const refreshAttachments = useCallback(async () => {
+    if (!sessionId) {
+      setAttachments([]);
+      return;
+    }
+    try {
+      const data = await apiRequest<{ attachments: ApiSessionAttachment[] }>(
+        `/chat/sessions/${sessionId}/attachments`,
+        {
+          token,
+          errorMessage: "첨부 목록을 불러오지 못했습니다.",
+        }
+      );
+      // 서버에서 받은 데이터와 현재 'indexing' 중인 임시 데이터를 합칩니다.
+      setAttachments((prev) => {
+        const pending = prev.filter((att) => att.attachment_id === 0);
+        const mapped = data.attachments.map((att) => ({
+          attachment_id: att.attachment_id,
+          filename: att.file_name,
+          status: att.status as SessionAttachment["status"],
+          task_id: `attachment-${att.attachment_id}`,
+        }));
+        return [...mapped, ...pending];
+      });
+    } catch (err) {
+      console.error("첨부 목록을 불러오지 못했습니다.", err);
+    }
+  }, [sessionId, token]);
+
+  // --- 부수 효과 (Side Effects) ---
+
+  // `sessionId`가 변경될 때마다 실행되는 메인 Effect 훅입니다.
+  // 역할: 새로운 세션으로 전환될 때 이전 상태를 정리하고 새 대화 기록/첨부 파일을 불러옵니다.
   useEffect(() => {
-    // 1. sessionId가 없으면(예: '새 대화' 클릭 직후) 모든 상태를 초기화하고 종료.
+    // 1. `sessionId`가 없으면(예: '새 대화' 클릭 직후) 모든 상태를 초기화하고 종료합니다.
     if (!sessionId) {
       setMessages([]);
       setAttachments([]);
@@ -94,7 +166,7 @@ export function useChatSession(token: string, sessionId: string | null) {
     setAttachments([]);
     abortControllerRef.current?.abort(); // 이전 세션의 스트리밍 요청이 있었다면 중단
 
-    // 3. 새 sessionId에 대한 대화 기록 비동기 로딩
+    // 3. 새 `sessionId`에 대한 대화 기록을 비동기적으로 로딩합니다.
     const fetchHistory = async () => {
       try {
         const data = await apiRequest<{ messages: ApiHistoryMessage[] }>(
@@ -105,7 +177,7 @@ export function useChatSession(token: string, sessionId: string | null) {
           }
         );
 
-        // API 응답을 UI에 맞는 Message 타입으로 변환
+        // API 응답을 UI에 맞는 `Message` 타입으로 변환합니다.
         const mappedMessages: Message[] = data.messages.map((msg, index) => ({
           id: `hist-${sessionId}-${index}`, // React key를 위한 고유 ID 생성
           role: msg.role,
@@ -122,87 +194,132 @@ export function useChatSession(token: string, sessionId: string | null) {
     };
 
     fetchHistory();
+    refreshAttachments();
 
-    // 4. Cleanup 함수: 컴포넌트가 언마운트되거나 sessionId가 변경되기 직전에 호출됩니다.
+    // 4. Cleanup 함수: 컴포넌트가 언마운트되거나 `sessionId`가 변경되기 직전에 호출됩니다.
     // 진행 중일 수 있는 스트리밍 요청을 취소하여 메모리 누수 및 불필요한 네트워크 요청을 방지합니다.
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, [sessionId, token]);
+  }, [sessionId, token, refreshAttachments]);
 
-  // 파일 인덱싱과 같은 백그라운드 작업의 상태를 폴링(polling)하기 위한 훅.
-  // 폴링은 작업이 완료될 때까지 주기적으로 서버에 상태를 물어보는 기법입니다.
-  const { startPolling } = useTaskPolling({
-    token,
-    buildStatusPath: (taskId) => `/documents/task-status/${taskId}`,
-    onSuccess: (response: TaskStatusResponse, taskId: string) => {
-      notify(extractResultMessage(response, "파일 인덱싱 완료!"));
-      // 인덱싱 성공 시, 해당 attachment의 상태를 'temporary'(임시 RAG 준비 완료)로 변경.
-      setAttachments((prev) =>
-        prev.map((att) =>
-          att.task_id === taskId ? { ...att, status: "temporary" } : att
-        )
-      );
-    },
-    onFailure: (response: TaskStatusResponse, taskId: string) => {
-      notify(extractResultMessage(response, "파일 인덱싱 실패"));
-      setAttachments((prev) =>
-        prev.map((att) =>
-          att.task_id === taskId ? { ...att, status: "failed" } : att
-        )
-      );
-    },
-    onError: (err: Error, taskId: string) => {
-      notify(err.message);
-      setAttachments((prev) =>
-        prev.map((att) =>
-          att.task_id === taskId ? { ...att, status: "failed" } : att
-        )
-      );
-    },
-  });
+  // 첨부 파일 상태 폴링(Polling)을 위한 `useEffect` 훅입니다.
+  // 파일 인덱싱은 비동기 작업이므로, 주기적으로 상태를 확인하여 UI를 업데이트해야 합니다.
+  useEffect(() => {
+    if (!sessionId) return;
+    // 5초마다 `refreshAttachments` 함수를 호출하여 첨부 파일 상태를 동기화합니다.
+    const interval = setInterval(() => {
+      refreshAttachments();
+    }, 5000);
+    // Cleanup 함수: `sessionId`가 변경되거나 컴포넌트가 언마운트될 때 인터벌을 정리합니다.
+    return () => clearInterval(interval);
+  }, [sessionId, refreshAttachments]);
 
   /**
-   * 사용자가 파일을 첨부했을 때 호출되는 함수.
-   * 파일을 서버에 업로드하고, 반환된 task_id로 인덱싱 상태 폴링을 시작합니다.
-   * '낙관적 UI 업데이트' 패턴을 사용하여 사용자 경험을 향상시킵니다.
+   * (신규) 여러 파일을 한 번에 업로드하도록 처리합니다.
    */
-  const handleAttachFile = useCallback(
-    async (file: File) => {
+  const handleUploadFiles = useCallback(
+    async (files: FileList) => {
       if (!sessionId) {
         notify("새 대화를 시작한 후 파일을 첨부해주세요.");
         return;
       }
+      if (files.length === 0) return;
 
-      const formData = new FormData();
-      formData.append("file", file);
+      notify(`${files.length}개 파일 업로드를 시작합니다...`);
+      
+      let successCount = 0;
 
+      // 여러 파일을 동시에 처리하기 위해 Promise.all을 사용할 수 있지만,
+      // 여기서는 순차적으로 처리하여 개별 파일의 성공/실패를 명확히 추적합니다.
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        // 1. [낙관적 UI 업데이트]
+        const tempTaskId = `temp-id-${Date.now()}-${file.name}`;
+        const tempAttachment: SessionAttachment = {
+          attachment_id: 0, 
+          filename: file.name,
+          status: "indexing",
+          task_id: tempTaskId,
+        };
+        setAttachments((prev) => [...prev, tempAttachment]);
+
+        try {
+          // 2. 서버에 파일 업로드 요청
+          const result = await apiRequest<AttachmentUploadResponse>(
+            `/chat/sessions/${sessionId}/attach`,
+            {
+            method: "POST",
+            token,
+            body: formData,
+            errorMessage: `${file.name} 첨부 실패`,
+          }
+          );
+
+          // 3. 성공 시 상태 동기화 (임시 ID를 실제 ID로 교체)
+          setAttachments((prev) =>
+            prev.map((att) =>
+              att.task_id === tempTaskId
+                ? {
+                    ...att,
+                    task_id: result.task_id,
+                    attachment_id: result.attachment_id,
+                    status: result.attachment_status ?? "temporary",
+                  }
+                : att
+            )
+          );
+          successCount++;
+        } catch (err) {
+          notify(err instanceof Error ? err.message : `${file.name} 업로드 오류`);
+          // 4. 실패 시 롤백 (임시 항목 제거)
+          setAttachments((prev) =>
+            prev.filter((att) => att.task_id !== tempTaskId)
+          );
+        }
+      }
+      if (successCount > 0) {
+        notify(`${successCount}개 파일의 인덱싱 작업을 시작합니다.`);
+      }
+    },
+    [sessionId, token]
+  );
+
+  /**
+   * (신규) GitHub 저장소 URL을 첨부합니다.
+   */
+  const handleUploadRepo = useCallback(
+    async (repoUrl: string) => {
+      if (!sessionId) {
+        notify("새 대화를 시작한 후 첨부해주세요.");
+        return;
+      }
+      
       // 1. [낙관적 UI 업데이트]
-      //    API 요청이 성공하기 전에 먼저 UI에 'indexing' 상태로 파일을 즉시 표시합니다.
-      //    사용자는 파일이 즉시 처리되기 시작하는 것처럼 느끼게 됩니다.
-      const tempTaskId = `temp-id-${Date.now()}`;
+      const tempTaskId = `temp-id-${Date.now()}-github`;
       const tempAttachment: SessionAttachment = {
-        attachment_id: 0, // 아직 서버로부터 ID를 받지 못함
-        filename: file.name,
+        attachment_id: 0,
+        filename: `GitHub: ${repoUrl.split('/').pop() || 'repo'}`,
         status: "indexing",
         task_id: tempTaskId,
       };
       setAttachments((prev) => [...prev, tempAttachment]);
 
       try {
-        // 2. 서버에 파일 업로드 요청
-        const result = await apiRequest<{
-          task_id: string;
-          attachment_id: number;
-        }>(`/chat/sessions/${sessionId}/attach`, {
+        // 2. 백엔드에 GitHub URL 전송
+        const result = await apiRequest<AttachmentUploadResponse>(
+          `/chat/sessions/${sessionId}/attach-github`,
+          {
           method: "POST",
           token,
-          body: formData,
-          errorMessage: "파일 첨부 실패",
-        });
+          json: { repo_url: repoUrl },
+          errorMessage: "GitHub 리포지토리 첨부 실패",
+        }
+        );
 
         // 3. 성공 시 상태 동기화
-        //    API 응답 성공 후, 임시 ID를 서버가 내려준 실제 ID로 교체합니다.
         setAttachments((prev) =>
           prev.map((att) =>
             att.task_id === tempTaskId
@@ -210,61 +327,92 @@ export function useChatSession(token: string, sessionId: string | null) {
                   ...att,
                   task_id: result.task_id,
                   attachment_id: result.attachment_id,
+                  filename: result.filename ?? att.filename,
+                  status: result.attachment_status ?? "temporary",
                 }
               : att
           )
         );
-
-        // 4. 실제 인덱싱 상태 폴링 시작
-        startPolling(result.task_id);
       } catch (err) {
-        notify(err instanceof Error ? err.message : "파일 업로드 오류");
-        // 5. 실패 시 롤백
-        //    실패 시, 낙관적 UI 업데이트로 추가했던 임시 attachment를 제거합니다.
+        notify(err instanceof Error ? err.message : "GitHub 첨부 오류");
+        // 4. 실패 시 롤백
         setAttachments((prev) =>
           prev.filter((att) => att.task_id !== tempTaskId)
         );
       }
     },
-    [sessionId, token, startPolling]
+    [sessionId, token]
   );
 
   /**
-   * (거버넌스) 임시 첨부 파일을 영구 지식 베이스(KB)로 등록해달라고 관리자에게 요청합니다.
+   * (신규) 로컬 디렉토리(폴더)를 첨부합니다.
    */
-  const handleRequestPromotion = useCallback(
-    async (
-      attachmentId: number,
-      metadata: { suggested_kb_doc_id: string; note_to_admin: string }
-    ) => {
-      if (!token) return;
+  const handleUploadDirectory = useCallback(
+    async (files: FileList, displayName: string) => {
+      if (!sessionId) {
+        notify("새 대화를 시작한 후 첨부해주세요.");
+        return;
+      }
+      
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // `webkitRelativePath`를 사용하여 파일의 상대 경로를 함께 전송합니다.
+        const path = (file as any).webkitRelativePath || file.name;
+        formData.append("files", file, path);
+      }
+      formData.append("display_name", displayName.trim());
+
+      // 1. [낙관적 UI 업데이트]
+      const tempTaskId = `temp-id-${Date.now()}-dir`;
+      const tempAttachment: SessionAttachment = {
+        attachment_id: 0,
+        filename: `Dir: ${displayName}`,
+        status: "indexing",
+        task_id: tempTaskId,
+      };
+      setAttachments((prev) => [...prev, tempAttachment]);
 
       try {
-        await apiRequest(`/documents/request_promotion/${attachmentId}`, {
+        // 2. 백엔드에 FormData 전송
+        const result = await apiRequest<AttachmentUploadResponse>(
+          `/chat/sessions/${sessionId}/attach-directory`,
+          {
           method: "POST",
           token,
-          json: metadata,
-          errorMessage: "승격 요청 실패",
-        });
-        notify("관리자에게 KB 등록 요청을 보냈습니다.");
-        // 요청 성공 시, UI 상태를 'pending_review'(승인 대기중)으로 변경합니다.
+          body: formData,
+          errorMessage: "디렉토리 첨부 실패",
+        }
+        );
+
+        // 3. 성공 시 상태 동기화
         setAttachments((prev) =>
           prev.map((att) =>
-            att.attachment_id === attachmentId
-              ? { ...att, status: "pending_review", pending_review_metadata: metadata }
+            att.task_id === tempTaskId
+              ? {
+                  ...att,
+                  task_id: result.task_id,
+                  attachment_id: result.attachment_id,
+                  filename: result.filename ?? att.filename,
+                  status: result.attachment_status ?? "temporary",
+                }
               : att
           )
         );
       } catch (err) {
-        notify(err instanceof Error ? err.message : "요청 중 오류 발생");
+        notify(err instanceof Error ? err.message : "디렉토리 첨부 오류");
+        // 4. 실패 시 롤백
+        setAttachments((prev) =>
+          prev.filter((att) => att.task_id !== tempTaskId)
+        );
       }
     },
-    [token]
+    [sessionId, token]
   );
-
+  
   /**
-   * 사용자가 메시지를 전송할 때 호출되는 메인 함수.
-   * 서버에 쿼리를 보내고 응답 스트리밍 처리를 `streamQuery` 함수에 위임합니다.
+   * 사용자가 메시지를 전송할 때 호출되는 메인 함수입니다.
+   * 서버에 쿼리를 보내고, SSE(Server-Sent Events) 스트리밍 처리를 시작합니다.
    */
   const sendMessage = useCallback(
     async (payload: { query: string }) => {
@@ -274,7 +422,7 @@ export function useChatSession(token: string, sessionId: string | null) {
         return;
       }
 
-      // 사용자 메시지를 즉시 UI에 추가 (낙관적 업데이트)
+      // [낙관적 UI 업데이트] 사용자 메시지를 즉시 UI에 추가합니다.
       const outgoing: Message = {
         id: `user-${crypto.randomUUID()}`,
         role: "user",
@@ -288,7 +436,8 @@ export function useChatSession(token: string, sessionId: string | null) {
         session_id: sessionId,
       };
 
-      // `streamQuery` 함수를 호출하여 SSE 스트리밍 시작
+      // `streamQuery` 함수를 호출하여 SSE 스트리밍을 시작하고,
+      // 각 이벤트에 대한 콜백 핸들러를 등록합니다.
       streamQuery(token, requestBody, {
         onToken: (tokenPayload) =>
           setMessages((prev) => updateAssistant(prev, tokenPayload)),
@@ -304,22 +453,60 @@ export function useChatSession(token: string, sessionId: string | null) {
         ref: abortControllerRef,
       });
     },
-    [token, sessionId] // messages는 의존성 배열에서 제거하여, 스트리밍 중 메시지 상태가 변해도 sendMessage 함수가 재생성되지 않도록 함
+    [token, sessionId] // `messages`는 의존성 배열에서 의도적으로 제거합니다.
+                       // 스트리밍 중 `messages` 상태가 계속 변해도 `sendMessage` 함수가 재생성되지 않도록 하여,
+                       // 안정적인 함수 참조를 유지하기 위함입니다.
   );
 
+  /**
+   * 세션에서 특정 첨부 파일을 삭제합니다.
+   */
+  const handleDeleteAttachment = useCallback(
+    async (attachmentId: number) => {
+      if (!sessionId || !token) {
+        notify("세션이 활성화되지 않았습니다.");
+        return;
+      }
+
+      try {
+        await apiRequest(
+          `/chat/sessions/${sessionId}/attach/${attachmentId}`,
+          {
+            method: "DELETE",
+            token,
+            errorMessage: "파일 삭제에 실패했습니다.",
+          }
+        );
+        notify("파일이 세션에서 제거되었습니다.");
+        // 삭제 성공 후, 첨부 파일 목록을 다시 불러와 UI를 최신 상태로 유지합니다.
+        await refreshAttachments();
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "파일 삭제 오류");
+      }
+    },
+    [sessionId, token, refreshAttachments]
+  );
+
+  // --- 훅의 반환 값 ---
+  // 이 훅을 사용하는 컴포넌트(ChatLayout)에 필요한 모든 상태와 함수를 객체 형태로 반환합니다.
   return {
     messages,
     sendMessage,
     loading,
     attachments,
-    handleAttachFile,
-    handleRequestPromotion,
+    handleDeleteAttachment,
+    handleUploadFiles,
+    handleUploadRepo,
+    handleUploadDirectory,
   };
 }
 
-// --- 메시지 목록 상태 업데이트 헬퍼 함수들 ---
+// =================================================================
+// 메시지 목록 상태 업데이트 헬퍼 함수들
+// =================================================================
 // 이 함수들은 모두 순수 함수(Pure Function)로, 불변성(immutability)을 유지하기 위해
-// 항상 새로운 메시지 배열을 생성하여 반환합니다. 이는 React의 상태 관리 원칙에 부합합니다.
+// 항상 새로운 메시지 배열을 생성하여 반환합니다. 이는 React의 상태 관리 원칙에 부합하며,
+// 예기치 않은 부수 효과를 방지합니다.
 
 /**
  * 스트리밍된 'token' 이벤트를 처리하여 어시스턴트 메시지를 업데이트합니다.
@@ -367,7 +554,7 @@ function updateAssistant(
 function addOrUpdateToolCall(messages: Message[], toolName: string): Message[] {
   const last = messages[messages.length - 1];
 
-  // 마지막 메시지가 이미 '실행 중인 도구' 위젯이라면, 텍스트만 업데이트.
+  // 마지막 메시지가 이미 '실행 중인 도구' 위젯이라면, 텍스트만 업데이트합니다.
   // (예: RAG -> WebSearch로 연속 실행 시)
   if (last && last.role === "assistant" && last.toolCall?.status === "running") {
     const updated = [...messages];
@@ -397,6 +584,7 @@ function addOrUpdateToolCall(messages: Message[], toolName: string): Message[] {
 function completeToolCall(messages: Message[], toolName: string): Message[] {
   const last = messages[messages.length - 1];
 
+  // 마지막 메시지가 현재 완료된 도구와 일치하는 '실행 중' 위젯인지 확인합니다.
   if (last && last.role === "assistant" && last.toolCall?.name === toolName) {
     const updated = [...messages];
     updated[updated.length - 1] = {
@@ -416,6 +604,7 @@ function attachSources(
   sources: { display_name: string }[]
 ): Message[] {
   const last = messages[messages.length - 1];
+  // 마지막 메시지가 어시스턴트 메시지인지 확인합니다.
   if (!last || last.role !== "assistant") return messages;
 
   const updated = [...messages];
@@ -423,6 +612,7 @@ function attachSources(
   return updated;
 }
 
+/** SSE 스트리밍 이벤트 핸들러들의 타입 정의 */
 type StreamHandlers = {
   onToken: (payload: { chunk: string; new_message: boolean }) => void;
   onToolStart: (toolName: string) => void;
@@ -542,24 +732,4 @@ async function streamQuery(
     if (!ended) handlers.onFinish(); // 'end' 이벤트 없이 종료된 경우를 대비해 로딩 상태를 확실히 해제
     handlers.ref.current = null; // 컨트롤러 참조 정리
   }
-}
-
-/**
- * Celery 태스크 폴링 응답에서 사용자에게 보여줄 메시지를 추출하는 헬퍼 함수.
- */
-function extractResultMessage(
-  response: TaskStatusResponse,
-  fallback: string
-): string {
-  if (!response.result) return fallback;
-  if (typeof response.result === "string") return response.result;
-  // response.result가 객체일 경우 message 속성을 찾습니다.
-  if (
-    response.result &&
-    typeof response.result === "object" &&
-    "message" in response.result
-  ) {
-    return String(response.result.message);
-  }
-  return fallback;
 }

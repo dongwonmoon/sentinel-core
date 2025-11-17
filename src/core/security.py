@@ -17,6 +17,8 @@ from ..api.schemas import TokenData
 
 
 # --- 1. 비밀번호 해싱 설정 ---
+# `bcrypt`는 현재 산업 표준으로 널리 사용되는 안전한 해싱 알고리즘입니다.
+# 키 스트레칭(key stretching)을 지원하여 브루트포스 공격에 대한 저항력을 높입니다.
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -44,7 +46,9 @@ def create_access_token(
         expire = datetime.now(timezone.utc) + timedelta(
             minutes=settings.AUTH_ACCESS_TOKEN_EXPIRE_MINUTES
         )
+    # 'exp' (만료 시간) 클레임을 추가합니다. 이 클레임은 토큰이 유효한 기간을 정의합니다.
     to_encode.update({"exp": expire})
+    # 비밀 키와 지정된 알고리즘을 사용하여 JWT를 인코딩(서명)합니다.
     return jwt.encode(
         to_encode, settings.AUTH_SECRET_KEY, algorithm=settings.AUTH_ALGORITHM
     )
@@ -53,20 +57,25 @@ def create_access_token(
 def verify_token(token: str, credentials_exception: Exception) -> TokenData:
     """JWT 토큰을 검증하고, 유효하면 페이로드(TokenData)를 반환합니다."""
     try:
-        # 토큰이 변조되었을 경우 jose가 바로 예외를 던지므로 민감 정보가 노출되지 않는다.
+        # `jwt.decode`는 토큰의 서명과 만료 시간을 자동으로 검증합니다.
+        # 서명이 유효하지 않거나 토큰이 만료된 경우 `JWTError` 예외가 발생합니다.
         payload = jwt.decode(
             token,
             settings.AUTH_SECRET_KEY,
             algorithms=[settings.AUTH_ALGORITHM],
         )
+        # 페이로드에서 사용자 이름('sub' 클레임)과 권한 그룹을 추출합니다.
         username: str = payload.get("sub")
         permission_groups: List[str] = payload.get(
             "permission_groups", ["all_users"]
         )
 
         if username is None:
+            # 토큰에 사용자 이름이 없는 경우, 유효하지 않은 토큰으로 간주합니다.
             raise credentials_exception
 
+        # 추출된 정보를 Pydantic 모델로 래핑하여 반환합니다.
         return TokenData(username=username, permission_groups=permission_groups)
     except JWTError:
+        # 토큰 검증 실패 시, 미리 전달받은 인증 예외를 발생시킵니다.
         raise credentials_exception

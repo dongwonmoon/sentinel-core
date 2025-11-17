@@ -3,8 +3,9 @@
 API 계층에서 사용되는 모든 Pydantic 모델(스키마)을 정의합니다.
 
 이 스키마들은 API의 요청 본문(Request Body)과 응답 본문(Response Body)의
-데이터 유효성을 검사하고, 형태를 강제하는 역할을 합니다.
-또한, FastAPI의 자동 문서 생성(Swagger UI/ReDoc)의 기반이 됩니다.
+데이터 유효성을 검사하고, 형태를 강제하는 역할을 합니다. 이를 통해 API의 안정성과
+예측 가능성을 높입니다. 또한, FastAPI의 자동 문서 생성(Swagger UI/ReDoc)의
+기반이 되어, 개발자들이 API 명세를 쉽게 확인하고 테스트할 수 있도록 돕습니다.
 """
 
 from datetime import datetime
@@ -44,19 +45,26 @@ class UserCreate(UserBase):
 
 
 class User(UserBase):
-    """API 응답용 사용자 정보 스키마 (비밀번호 제외)"""
+    """
+    API 응답용 사용자 정보 스키마입니다.
+    보안을 위해 해시된 비밀번호와 같은 민감한 정보는 이 스키마에서 제외됩니다.
+    """
 
     user_id: int
     is_active: bool
     permission_groups: List[str]
     created_at: datetime
 
-    # Pydantic V2 설정: SQLAlchemy 모델 객체로부터 Pydantic 모델을 생성할 수 있도록 허용
+    # Pydantic V2 설정: SQLAlchemy 모델 객체(ORM 모델)로부터 Pydantic 모델을 직접 생성할 수 있도록 허용합니다.
+    # 이를 통해 `User.model_validate(orm_user)`와 같은 코드가 가능해집니다.
     model_config = {"from_attributes": True}
 
 
 class UserInDB(User):
-    """DB에 저장된 사용자 모델 (해시된 비밀번호 포함)"""
+    """
+    데이터베이스에 저장된 전체 사용자 정보를 나타내는 스키마입니다.
+    API 응답에는 직접 사용되지 않으며, 주로 내부 로직에서 사용됩니다.
+    """
 
     hashed_password: str
     profile_text: Optional[str] = None
@@ -105,12 +113,6 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., description="사용자의 질문")
     top_k: int = Field(default=3, description="RAG 검색 시 반환할 최종 청크 수")
-    # doc_ids_filter: Optional[List[str]] = Field(
-    #     default=None, description="RAG 검색을 제한할 문서 ID 리스트"
-    # )
-    # chat_history: Optional[List[ChatMessageBase]] = Field(
-    #     default=None, description="이전 대화 기록"
-    # )
     session_id: Optional[str] = Field(
         default=None, description="현재 대화 세션을 식별하는 ID"
     )
@@ -125,11 +127,17 @@ class SessionContextUpdate(BaseModel):
 
 
 class Source(BaseModel):
-    """답변의 출처 정보를 담는 스키마"""
+    """답변의 출처(Source) 정보를 담는 스키마입니다."""
 
-    chunk_text: str
-    metadata: Dict[str, Any]
-    score: float
+    chunk_text: str = Field(
+        ..., description="RAG를 통해 검색된 원본 텍스트 청크"
+    )
+    metadata: Dict[str, Any] = Field(
+        ..., description="청크에 대한 추가 정보 (예: 파일명, 페이지 번호)"
+    )
+    score: float = Field(
+        ..., description="쿼리와의 유사도 점수 (높을수록 관련성 높음)"
+    )
 
 
 class UserProfileResponse(BaseModel):
@@ -144,153 +152,28 @@ class UserProfileUpdate(BaseModel):
     profile_text: str
 
 
-# --- 3. 문서 (Documents) 관련 스키마 ---
+# --- 3. 첨부/업로드 관련 스키마 ---
 
 
 class GitHubRepoRequest(BaseModel):
     """POST /index-github-repo 요청 스키마"""
 
+    # Pydantic의 `HttpUrl` 타입을 사용하여 입력된 URL이 유효한 형식인지 자동으로 검증합니다.
     repo_url: HttpUrl = Field(..., description="인덱싱할 GitHub 저장소의 URL")
 
 
-class DeleteDocumentRequest(BaseModel):
-    """DELETE /documents 요청 스키마"""
-
-    doc_id_or_prefix: str = Field(..., description="삭제할 doc_id 또는 접두사")
-
-
-class PromotionRequest(BaseModel):
-    suggested_kb_doc_id: str = Field(
-        ...,
-        description="영구 지식 베이스(KB)에 등록되길 희망하는 이름 (예: hr-policy-v3)",
-    )
-    note_to_admin: Optional[str] = Field(
-        None, description="관리자에게 남기는 메모 (예: v2를 대체합니다)"
-    )
-
-
-class SessionAttachment(BaseModel):
-    """
-    (거버넌스) GET /admin/pending_attachments 등
-    API 응답용 '임시 첨부파일' 스키마
-    """
+class SessionAttachmentResponse(BaseModel):
+    """세션 첨부파일 정보"""
 
     attachment_id: int
-    session_id: str
-    user_id: Optional[int]
     file_name: str
-    file_path: str
     status: str
-    pending_review_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
-class DocumentResponse(BaseModel):
-    """GET /documents 응답 스키마의 각 항목"""
+class SessionAttachmentListResponse(BaseModel):
+    """세션 첨부파일 목록 응답"""
 
-    doc_id: str
-    source_type: Optional[str] = None
-    owner_user_id: Optional[int] = None
-    permission_groups: List[str]
-    created_at: datetime
-    last_verified_at: datetime
-    promoted_from_attachment_id: Optional[int] = None
-    model_config = {"from_attributes": True}
-
-
-# --- 4. 스케줄러 (Scheduler) 관련 스키마 ---
-
-
-class TaskCreate(BaseModel):
-    task_name: str
-    schedule: str
-    task_kwargs: dict
-
-
-class TaskResponse(TaskCreate):
-    task_id: int
-    user_id: int
-    is_active: bool
-    model_config = {"from_attributes": True}
-
-
-# --- 5. 작업 상태 (Task Status) 관련 스키마 ---
-
-
-class TaskStatusResponse(BaseModel):
-    """GET /documents/task-status/{task_id} 응답 스키마"""
-
-    task_id: str
-    status: str
-    result: Optional[Any] = None
-
-
-# --- 6. 관리자 (Admin) 관련 스키마 ---
-
-
-class UpdatePermissionsRequest(BaseModel):
-    """PUT /admin/users/{user_id}/permissions 요청 스키마"""
-
-    groups: List[str] = Field(..., description="새롭게 할당할 권한 그룹 목록")
-
-
-class PromotionApprovalRequest(BaseModel):
-    kb_doc_id: str = Field(
-        ..., description="영구 KB에 저장될 최종 확정 ID (관리자가 수정 가능)"
-    )
-    permission_groups: List[str] = Field(
-        ..., description="이 문서에 적용할 최종 권한 그룹"
-    )
-
-
-class ToolBase(BaseModel):
-    name: str = Field(..., description="도구 이름 (예: jira_create_ticket)")
-    description: str = Field(..., description="LLM을 위한 도구 설명")
-    api_endpoint_url: HttpUrl = Field(..., description="호출할 API 엔드포인트")
-    json_schema: Dict[str, Any] = Field(..., description="인자의 JSON Schema")
-    permission_groups: List[str] = Field(default_factory=lambda: ["admin"])
-    is_active: bool = True
-
-
-class ToolCreate(ToolBase):
-    pass
-
-
-class ToolUpdate(ToolBase):
-    pass
-
-
-class ToolResponse(ToolBase):
-    tool_id: int
-    created_at: datetime
-    model_config = {"from_attributes": True}
-
-
-class AdminAuditLog(BaseModel):
-    """관리자 감사 로그 응답 스키마"""
-
-    log_id: int
-    actor_user_id: int
-    action: str
-    target_id: str
-    old_value: Optional[Dict[str, Any]] = None
-    new_value: Optional[Dict[str, Any]] = None
-    created_at: datetime
-    model_config = {"from_attributes": True}
-
-
-class AgentAuditLog(BaseModel):
-    """에이전트 감사 로그 응답 스키마"""
-
-    log_id: int
-    session_id: Optional[str] = None
-    created_at: datetime
-    question: str
-    permission_groups: Optional[List[str]] = None
-    tool_choice: Optional[str] = None
-    code_input: Optional[str] = None
-    final_answer: Optional[str] = None
-    full_agent_state: Dict[str, Any]
-    model_config = {"from_attributes": True}
+    attachments: List[SessionAttachmentResponse]

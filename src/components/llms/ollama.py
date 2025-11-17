@@ -105,7 +105,9 @@ class OllamaLLM(BaseLLM):
             yield chunk
         logger.debug(f"'{self.model_name}' 모델의 스트리밍이 종료되었습니다.")
 
-    async def invoke(self, messages: List[BaseMessage], config: Dict[str, Any]) -> Any:
+    async def invoke(
+        self, messages: List[BaseMessage], config: Dict[str, Any]
+    ) -> Any:
         """
         Ollama 모델을 호출하여 전체 응답을 한 번에 받습니다.
         `BaseLLM`의 추상 메서드를 구현하며, 실제 로직은 `ChatOllama`의 `ainvoke` 메서드에 위임합니다.
@@ -117,7 +119,11 @@ class OllamaLLM(BaseLLM):
         Returns:
             Any: LLM의 전체 응답 내용 (`AIMessage` 객체).
         """
-        logger.debug(f"'{self.model_name}' 모델로 단일 응답(invoke) 요청을 시작합니다.")
+        logger.debug(
+            f"'{self.model_name}' 모델로 단일 응답(invoke) 요청을 시작합니다."
+        )
         response = await self.client.ainvoke(messages, config=config)
-        logger.debug(f"'{self.model_name}' 모델로부터 단일 응답을 수신했습니다.")
+        logger.debug(
+            f"'{self.model_name}' 모델로부터 단일 응답을 수신했습니다."
+        )
         return response
