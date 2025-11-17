@@ -26,6 +26,7 @@ class InMemoryRateLimiter:
         self.history: Dict[str, Deque[float]] = defaultdict(deque)
 
     async def assert_within_limit(self, namespace: str, user_key: str):
+        """슬라이딩 윈도우 안의 호출 수가 제한을 넘으면 ValueError를 발생시킨다."""
         now = time.monotonic()
         cfg = self.config.get(namespace)
         if not cfg:

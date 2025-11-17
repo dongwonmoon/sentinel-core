@@ -56,6 +56,7 @@ def create_llm(
     # (필요 시) Anthropic 등 다른 프로바이더 추가
     # elif llm_settings.provider == "anthropic":
     #     ...
+    # 새 provider가 설정에 추가되면 여기서 분기되지 않으므로 명시적으로 실패시킨다.
     raise ValueError(f"Unsupported LLM provider: {llm_settings.provider}")
 
 
@@ -100,6 +101,7 @@ def create_embedding_model(
     # (필요 시) HuggingFace 등 다른 프로바이더 추가
     # elif embedding_settings.provider == "huggingface":
     #     ...
+    # 지원하지 않는 provider는 환경 설정이 잘못된 것이므로 빠르게 예외를 던진다.
     raise ValueError(f"Unsupported embedding provider: {embedding_settings.provider}")
 
 
@@ -122,6 +124,7 @@ def create_vector_store(
         return MilvusVectorStore(
             settings=full_settings, embedding_model=embedding_model
         )
+    # 설정 검증이 통과했는데도 이 지점에 오면 잘못된 provider가 입력된 것이므로 즉시 오류를 낸다.
     raise ValueError(f"Unsupported vector store provider: {vs_settings.provider}")
 
 
@@ -148,6 +151,7 @@ def create_reranker(
 def get_tools(enabled_tools_config: List[str]) -> List[BaseTool]:
     """설정에 따라 활성화된 도구 목록을 생성합니다."""
     enabled_tools = []
+    # settings.tools_enabled 에 정의된 식별자만 로딩하여 불필요한 의존성 초기화를 막는다.
     if "duckduckgo_search" in enabled_tools_config:
         from ..components.tools.duckduckgo_search import (
             get_duckduckgo_search_tool,

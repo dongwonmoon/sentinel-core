@@ -20,7 +20,7 @@ from ..core.config import get_settings
 from ..core.logger import get_logger
 from ..core.metrics import collector
 from ..core.metrics import router as metrics_router
-from .endpoints import admin, auth, chat, documents, notifications, scheduler
+from .endpoints import auth, chat
 
 # --- 초기 설정 ---
 # 애플리케이션 설정 객체를 로드합니다.
@@ -90,12 +90,6 @@ logger.info("요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 
 logger.info("API 라우터를 등록합니다...")
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(documents.router, prefix="/documents", tags=["Documents"])
-app.include_router(admin.router, prefix="/admin", tags=["Admin"])
-app.include_router(
-    notifications.router, prefix="/notifications", tags=["Notifications"]
-)
-app.include_router(scheduler.router, prefix="/scheduler", tags=["Scheduler"])
 app.include_router(metrics_router, prefix="/metrics", tags=["Metrics"])
 logger.info("모든 API 라우터가 성공적으로 등록되었습니다.")
 

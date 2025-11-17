@@ -26,9 +26,7 @@ celery_app = Celery(
     "sentinel_tasks",
     broker=settings.CELERY_BROKER_URL,  # 작업을 받아올 메시지 큐 (Redis) 주소
     backend=settings.CELERY_RESULT_BACKEND,  # 작업 결과를 저장할 곳 (Redis) 주소
-    include=[
-        "src.worker.tasks"
-    ],  # 워커가 시작될 때 자동으로 임포트할 태스크 모듈 목록
+    include=["src.worker.tasks"],  # 워커가 시작될 때 자동으로 임포트할 태스크 모듈 목록
 )
 
 # --- Celery 상세 설정 ---
@@ -36,25 +34,6 @@ celery_app.conf.update(
     # task_track_started=True: 태스크가 '시작됨' 상태를 보고하도록 설정합니다.
     # 이를 통해 작업의 현재 상태를 더 상세하게 추적할 수 있습니다.
     task_track_started=True,
-    # --- Celery Beat 스케줄 설정 ---
-    # 주기적으로 실행될 작업들을 정의합니다. (Celery Beat 프로세스가 필요)
-    beat_schedule={
-        # 1분마다 사용자가 예약한 작업을 확인하고 실행하는 태스크
-        "run-user-tasks-every-minute": {
-            "task": "src.worker.tasks.check_and_run_user_tasks",  # 실행할 태스크의 전체 경로
-            "schedule": crontab(
-                minute="*"
-            ),  # crontab 형식으로 실행 주기 설정 (매 분)
-            "options": {"expires": 60},  # 작업이 60초 안에 시작되지 않으면 만료
-        },
-        # 매일 오전 4시 5분에 오래된 문서를 확인하는 태스크
-        "check-stale-documents-every-day": {
-            "task": "src.worker.tasks.check_stale_documents",
-            "schedule": crontab(
-                minute="5", hour="4"
-            ),  # 매일 4:05 AM (서버 시간 기준)
-        },
-    },
     # --- 태스크 동작 관련 설정 ---
     # task_acks_late = True: 태스크가 성공적으로 완료된 후에만 메시지 큐에서 해당 작업을 제거(ack)합니다.
     # 만약 워커가 작업 도중 예기치 않게 종료되면, 작업이 큐에 남아있어 다른 워커가 재시도할 수 있습니다.

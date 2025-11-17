@@ -53,6 +53,7 @@ def create_access_token(
 def verify_token(token: str, credentials_exception: Exception) -> TokenData:
     """JWT 토큰을 검증하고, 유효하면 페이로드(TokenData)를 반환합니다."""
     try:
+        # 토큰이 변조되었을 경우 jose가 바로 예외를 던지므로 민감 정보가 노출되지 않는다.
         payload = jwt.decode(
             token,
             settings.AUTH_SECRET_KEY,

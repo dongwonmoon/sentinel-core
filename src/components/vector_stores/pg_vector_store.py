@@ -188,14 +188,15 @@ class PgVectorStore(BaseVectorStore):
         Returns:
             List[Dict[str, Any]]: 검색된 문서 청크 정보의 리스트.
         """
+        # asyncpg는 배열 타입에 대한 prepared statement를 덜 최적화하므로 문자열 캐스팅 후 SQL로 넘긴다.
         query_vec_str = str(query_embedding)
         logger.debug(
             f"벡터 검색 시작. k={k}, 허용 그룹: {allowed_groups}, 문서 필터: {doc_ids_filter}"
         )
 
-        # 기본 SQL 쿼리문: `documents`와 `document_chunks`를 조인하고,
-        # `&&` 연산자를 사용하여 권한 그룹이 교차하는지 확인합니다.
-        # `<->` 연산자는 코사인 거리(Cosine Distance)를 계산합니다. (0에 가까울수록 유사)
+        # documents/document_chunks를 조인하면서
+        #  - ARRAY && 연산자로 사용자 권한과 문서 권한의 교집합을 확인하고
+        #  - pgvector의 `<->` 연산자로 코사인 거리를 계산한다.
         sql_query = """
             WITH relevant_chunks AS (
                 SELECT 

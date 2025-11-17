@@ -22,7 +22,7 @@ class AgentState(TypedDict):
     LangGraph의 상태를 정의합니다. 그래프의 각 노드를 거치며 이 상태가 업데이트됩니다.
     """
 
-    # 입력
+    # --- 요청 입력 ---
     question: str
     permission_groups: List[str]
     top_k: int
@@ -31,6 +31,7 @@ class AgentState(TypedDict):
     user_profile: Optional[str] = None
     user_id: Optional[str]
     session_id: Optional[str]
+    # 하이브리드 컨텍스트 / 동적 도구 목록은 build_hybrid_context 노드가 채운다.
     hybrid_context: str
     available_dynamic_tools: List[DynamicTool]
     # 'route_query'가 선택한 동적 도구 정보
@@ -38,14 +39,14 @@ class AgentState(TypedDict):
     # 'route_query'가 LLM을 통해 생성한, 동적 도구에 전달할 인자(JSON)
     dynamic_tool_input: Optional[Dict[str, Any]] = None
 
-    # 중간 상태
+    # --- 중간 상태 ---
     chosen_llm: Literal["fast", "powerful"]
     tool_choice: str
     tool_outputs: Dict[str, Any]
     code_input: Optional[str] = None
     failed_tools: Optional[List[str]] = None
 
-    # 최종 출력
+    # --- 최종 출력 ---
     answer: str
 
 
