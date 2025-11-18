@@ -28,7 +28,7 @@ export default function ChatLayout() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   // 파일 업로드 모달의 열림/닫힘 상태를 관리합니다.
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
   // 우측 컨텍스트 패널의 열림/닫힘 상태를 관리합니다.
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true); // 우측 패널을 기본적으로 열어둡니다.
 
@@ -84,9 +84,9 @@ export default function ChatLayout() {
           sendMessage={session.sendMessage}
           isRightPanelOpen={isRightPanelOpen}
           onToggleRightPanel={() => setIsRightPanelOpen(prev => !prev)}
-          onOpenUploadModal={() => setIsUploadModalOpen(true)}
+          handleUploadFiles={session.handleUploadFiles}
+          onOpenCodeModal={() => setIsCodeModalOpen(true)}
         />
-
         {/* 우측 컨텍스트 패널: 현재 세션의 첨부파일 목록 등 추가 정보 표시 */}
         <div className="right-panel-wrapper">
           <SessionContextPanel
@@ -103,8 +103,8 @@ export default function ChatLayout() {
 
       {/* 파일 업로드 모달: isUploadModalOpen 상태에 따라 표시 여부 결정 */}
       <SessionUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
+        isOpen={isCodeModalOpen}
+        onClose={() => setIsCodeModalOpen(false)}
         sessionId={activeSessionId}
       />
     </div>

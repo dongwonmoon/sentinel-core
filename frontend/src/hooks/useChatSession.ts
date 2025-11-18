@@ -266,7 +266,7 @@ export function useChatSession(token: string, sessionId: string | null) {
                     ...att,
                     task_id: result.task_id,
                     attachment_id: result.attachment_id,
-                    status: result.attachment_status ?? "temporary",
+                    status: (result.attachment_status as SessionAttachment["status"]) ?? "temporary",
                   }
                 : att
             )
@@ -328,7 +328,7 @@ export function useChatSession(token: string, sessionId: string | null) {
                   task_id: result.task_id,
                   attachment_id: result.attachment_id,
                   filename: result.filename ?? att.filename,
-                  status: result.attachment_status ?? "temporary",
+                  status: (result.attachment_status as SessionAttachment["status"]) ?? "temporary",
                 }
               : att
           )
@@ -394,7 +394,7 @@ export function useChatSession(token: string, sessionId: string | null) {
                   task_id: result.task_id,
                   attachment_id: result.attachment_id,
                   filename: result.filename ?? att.filename,
-                  status: result.attachment_status ?? "temporary",
+                  status: (result.attachment_status as SessionAttachment["status"]) ?? "temporary",
                 }
               : att
           )

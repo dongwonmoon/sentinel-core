@@ -24,8 +24,10 @@ type Props = {
   isRightPanelOpen: boolean;
   /** 우측 컨텍스트 패널의 열림/닫힘 상태를 토글하는 함수 */
   onToggleRightPanel: () => void;
-  /** 파일 업로드 모달을 여는 함수 */
-  onOpenUploadModal: () => void;
+  /**  */
+  handleUploadFiles: (files: FileList) => Promise<void>;
+  /**  */
+  onOpenCodeModal: () => void;
 };
 
 /**
@@ -39,7 +41,8 @@ export default function ChatWindow({
   sendMessage,
   isRightPanelOpen,
   onToggleRightPanel,
-  onOpenUploadModal,
+  handleUploadFiles,
+  onOpenCodeModal
 }: Props) {
   // KB 등록 요청 모달을 띄울 첨부 파일 정보를 담는 상태
 
@@ -62,8 +65,6 @@ export default function ChatWindow({
         </button>
       </header>
 
-      {/* ⬇️ session-context-area 제거됨 */}
-
       {/* 
         메시지 목록을 렌더링하는 컴포넌트입니다.
         `messages` 배열을 받아와 각 메시지 타입(user, assistant, tool)에 맞는 UI를 렌더링합니다.
@@ -79,8 +80,8 @@ export default function ChatWindow({
       <Composer
         disabled={loading}
         onSend={(text) => sendMessage({ query: text }) }
-        // ⬇️ onAttachFile 대신 onOpenUploadModal 전달
-        onOpenUploadModal={onOpenUploadModal}
+        handleUploadFiles={handleUploadFiles}
+        onOpenCodeModal={onOpenCodeModal}
       />
 
       {/* ⬇️ PromotionModal 렌더링 제거됨 */}

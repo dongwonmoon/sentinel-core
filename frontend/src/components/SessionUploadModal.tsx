@@ -12,7 +12,6 @@ import { useState, useRef, useCallback } from "react";
 import Modal from "./Modal";
 import { useChatSession } from "../hooks/useChatSession"; // ⬅️ 훅 직접 사용
 import { useAuth } from "../providers/AuthProvider";
-import { notify } from "./NotificationHost";
 
 /** SessionUploadModal 컴포넌트가 받는 props의 타입을 정의합니다. */
 type Props = {
@@ -56,14 +55,6 @@ export default function SessionUploadModal({ isOpen, onClose, sessionId }: Props
 
   // --- 2. 이벤트 핸들러 ---
 
-  /** 파일 입력(input)이 변경되었을 때(파일이 선택되었을 때) 호출됩니다. */
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleUploadFiles(e.target.files);
-      onClose(); // 업로드 시작 후 즉시 모달 닫기
-    }
-  };
-
   /** 디렉토리 입력(input)이 변경되었을 때(폴더가 선택되었을 때) 호출됩니다. */
   const onDirChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -103,92 +94,55 @@ export default function SessionUploadModal({ isOpen, onClose, sessionId }: Props
   // --- 3. UI 렌더링 ---
   return (
     <Modal onClose={handleClose} width="min(500px, 90vw)">
-      {/* 이 부분은 image_294368.png 처럼 탭이 아닌
-        단순 버튼 목록으로 구현하는 것이 더 간결합니다.
-      */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+
+      <div className="panel-form" style={{ marginTop: '1.5rem', background: 'var(--color-app-bg)', padding: '1rem', borderRadius: '12px' }}>
+        <h4 style={{ marginTop: 0 }}>코드 가져오기</h4>
         
-        {/* 1. 파일 업로드 버튼 */}
+        {/* GitHub URL 입력 폼 */}
+        <form onSubmit={onRepoSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
+          <input
+            type="url"
+            placeholder="GitHub 저장소 또는 브랜치 URL"
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            required
+            style={{ flex: 1, margin: 0 }}
+          />
+          <button type="submit" className="primary" disabled={isLoading} style={{ padding: '0 1.2rem' }}>
+            {isLoading ? "..." : "가져오기"}
+          </button>
+        </form>
+
+        <hr style={{ border: 'none', borderTop: '1px solid var(--color-panel-border)', margin: '1rem 0' }} />
+
+        {/* 로컬 디렉토리 업로드 폼 */}
         <input
-          ref={fileInputRef}
+          ref={dirInputRef}
           type="file"
+          //@ts-ignore
+          webkitdirectory="true"
+          directory="true"
           multiple
-          accept=".zip,.txt,.md,.pdf,.py,.js,.ts,.java,.c,.h,.cpp,.go, .png, .jpg, .jpeg"
-          onChange={onFileChange}
-          style={{ display: "none" }} // 실제 input은 숨기고 버튼으로 트리거합니다.
+          onChange={onDirChange}
+          style={{ display: 'none' }}
+        />
+        <label style={{ fontSize: '0.9rem' }}>또는 로컬 폴더 업로드:</label>
+        <input
+          type="text"
+          placeholder="그룹 이름 (선택, 기본값: 폴더명)"
+          value={dirName}
+          onChange={(e) => setDirName(e.target.value)}
+          style={{ margin: 0 }}
         />
         <button 
-          className="list-item" 
-          onClick={() => fileInputRef.current?.click()}
-          style={{ textAlign: 'left', background: 'var(--color-hover-bg)' }}
+          type="button" 
+          className="ghost" 
+          onClick={() => dirInputRef.current?.click()}
+          style={{ width: '100%', background: 'white' }}
         >
-          <span style={{ fontSize: '1.2rem', marginRight: '1rem' }}>📎</span>
-          파일 업로드 (다중 선택 가능)
-        </button>
-        
-        {/* 2. 코드 가져오기 버튼 */}
-        <button 
-          className="list-item" 
-          onClick={() => setActiveTab("code")}
-          style={{ textAlign: 'left', background: 'var(--color-hover-bg)' }}
-        >
-          <span style={{ fontSize: '1.2rem', marginRight: '1rem' }}>&lt;/&gt;</span>
-          코드 가져오기
+          폴더 업로드
         </button>
       </div>
-
-      {/* "코드 가져오기" 탭이 활성화되었을 때만 하위 폼을 표시합니다. */}
-      {activeTab === "code" && (
-        <div className="panel-form" style={{ marginTop: '1.5rem', background: 'var(--color-app-bg)', padding: '1rem', borderRadius: '12px' }}>
-          <h4 style={{ marginTop: 0 }}>코드 가져오기</h4>
-          
-          {/* GitHub URL 입력 폼 */}
-          <form onSubmit={onRepoSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
-            <input
-              type="url"
-              placeholder="GitHub 저장소 또는 브랜치 URL"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              required
-              style={{ flex: 1, margin: 0 }}
-            />
-            <button type="submit" className="primary" disabled={isLoading} style={{ padding: '0 1.2rem' }}>
-              {isLoading ? "..." : "가져오기"}
-            </button>
-          </form>
-
-          <hr style={{ border: 'none', borderTop: '1px solid var(--color-panel-border)', margin: '1rem 0' }} />
-
-          {/* 로컬 디렉토리 업로드 폼 */}
-          <input
-            ref={dirInputRef}
-            type="file"
-            //@ts-ignore - 비표준 속성이지만 대부분의 모던 브라우저에서 지원합니다.
-            webkitdirectory="true"
-            directory="true"
-            multiple
-            onChange={onDirChange}
-            style={{ display: 'none' }}
-          
-          />
-          <label style={{ fontSize: '0.9rem' }}>또는 로컬 폴더 업로드:</label>
-          <input
-            type="text"
-            placeholder="그룹 이름 (선택, 기본값: 폴더명)"
-            value={dirName}
-            onChange={(e) => setDirName(e.target.value)}
-            style={{ margin: 0 }}
-          />
-          <button 
-            type="button" 
-            className="ghost" 
-            onClick={() => dirInputRef.current?.click()}
-            style={{ width: '100%', background: 'white' }}
-          >
-            폴더 업로드
-          </button>
-        </div>
-      )}
     </Modal>
   );
 }

@@ -490,7 +490,35 @@ select:focus {
   color: var(--color-text-muted);
 }
 
-/* 5. 오른쪽 패널 (Gemini 스타일) */
+/* 5. 업로드 팝오버 */
+.upload-popover {
+  position: absolute;
+  bottom: calc(100% + 0.5rem); /* Composer 바로 위쪽 */
+  right: 0;
+  width: 280px;
+  background: var(--color-panel-bg);
+  border-radius: 12px;
+  border: 1px solid var(--color-panel-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  z-index: 10;
+}
+.upload-popover .list-item {
+  padding: 0.75rem 1rem;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 8px;
+}
+.upload-popover .list-item:hover {
+  background: var(--color-hover-bg);
+}
+
+/* 6. 오른쪽 패널 (Gemini 스타일) */
 .context-panel {
   padding: 1.25rem;
   background: var(--color-app-bg);
@@ -546,7 +574,7 @@ select:focus {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
 }
 
-/* 6. 알림 (Toast) 스타일 (다크 모드 유지) */
+/* 7. 알림 (Toast) 스타일 (다크 모드 유지) */
 .toast-stack {
   position: fixed;
   bottom: 1.5rem;
@@ -565,7 +593,7 @@ select:focus {
   box-shadow: 0 15px 35px rgba(2, 6, 23, 0.6);
 }
 
-/* 7. 반응형 (기존 스타일 유지) */
+/* 8. 반응형 (기존 스타일 유지) */
 @media (max-width: 1200px) {
   .app-shell {
     grid-template-columns: 240px minmax(0, 1fr) 0px; /* ⬅️ 2단으로 변경 */
@@ -591,4 +619,36 @@ select:focus {
   .right-panel-wrapper {
     display: none; /* ⬅️ 모바일에서는 오른쪽 패널 완전히 숨김 */
   }
+}
+
+/* 8. 앱 모달 (라이트 테마) (신규) */
+.app-modal-overlay {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  
+  /* ⬅️ 로그인 화면의 어두운 배경 대신 반투명 회색 배경 사용 */
+  background: rgba(95, 99, 104, 0.7);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  
+  /* ⬅️ backdrop-filter로 블러 효과 (선택 사항) */
+  backdrop-filter: blur(4px);
+}
+.app-modal-content {
+  width: min(500px, 90vw);
+  background: var(--color-panel-bg); /* ⬅️ 흰색 패널 배경 */
+  padding: 2.5rem;
+  border-radius: 24px;
+  display: flex;
+  gap: 0.9rem;
+  flex-direction: column;
+  border: 1px solid var(--color-panel-border); /* ⬅️ 연한 테두리 */
+  box-shadow: 0 40px 80px rgba(5, 6, 14, 0.2); /* ⬅️ 그림자 약화 */
+  color: var(--color-text-primary); /* ⬅️ 기본 텍스트 색상 */
 }
