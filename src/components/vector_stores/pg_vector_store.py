@@ -7,9 +7,8 @@ import json
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 
+from ...core.database import AsyncSessionLocal
 from ...core.config import Settings
 from ..embeddings.base import BaseEmbeddingModel
 from .base import BaseVectorStore
@@ -37,31 +36,8 @@ class PgVectorStore(BaseVectorStore):
         self.embedding_model = embedding_model
 
         logger.info("PgVectorStore 초기화를 시작합니다...")
-        try:
-            # SQLAlchemy를 사용하여 비동기 데이터베이스 엔진을 생성합니다.
-            # 이 엔진은 커넥션 풀을 관리하며, DB와 비동기적으로 통신합니다.
-            # pool_pre_ping=True: 커넥션 풀에서 연결을 가져올 때마다 간단한 쿼리를 보내
-            # 해당 연결이 유효한지 확인합니다. 이는 DB 연결이 끊어진 경우(예: 네트워크 문제, DB 재시작)
-            # 발생할 수 있는 오류를 사전에 방지하여 안정성을 높입니다.
-            self.engine = create_async_engine(
-                settings.DATABASE_URL, pool_pre_ping=True
-            )
-
-            # 비동기 세션을 생성하기 위한 세션 팩토리(Session Factory)를 설정합니다.
-            # `get_db_session` 의존성이나 백그라운드 작업에서 이 팩토리를 사용하여
-            # 독립적인 DB 세션을 생성하게 됩니다.
-            self.AsyncSessionLocal = sessionmaker(
-                bind=self.engine, class_=AsyncSession, expire_on_commit=False
-            )
-            logger.info(
-                "PgVectorStore 초기화 완료. 비동기 엔진 및 세션 팩토리가 설정되었습니다."
-            )
-        except Exception as e:
-            logger.error(
-                f"PgVectorStore 초기화 중 데이터베이스 엔진 생성 실패: {e}",
-                exc_info=True,
-            )
-            raise
+        self.AsyncSessionLocal = AsyncSessionLocal
+        logger.info("PgVectorStore 초기화 완료.")
 
     @property
     def provider(self) -> str:
@@ -70,8 +46,7 @@ class PgVectorStore(BaseVectorStore):
 
     async def search(
         self,
-        query_embedding: List[float],
-        allowed_groups: List[str],
+        query: str,
         k: int = 4,
         doc_ids_filter: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
@@ -90,10 +65,9 @@ class PgVectorStore(BaseVectorStore):
         """
         # asyncpg는 배열 타입에 대한 prepared statement를 덜 최적화하므로,
         # 벡터를 문자열로 캐스팅하여 SQL 쿼리에 직접 주입합니다.
+        query_embedding = self.embedding_model.embed_query(query)
         query_vec_str = str(query_embedding)
-        logger.debug(
-            f"벡터 검색 시작. k={k}, 허용 그룹: {allowed_groups}, 문서 필터: {doc_ids_filter}"
-        )
+        logger.debug(f"벡터 검색 시작. k={k}, 문서 필터: {doc_ids_filter}")
 
         # CTE(Common Table Expression)를 사용하여 쿼리를 구성합니다.
         # 1. `documents`와 `document_chunks` 테이블을 조인합니다.
@@ -111,11 +85,8 @@ class PgVectorStore(BaseVectorStore):
                     document_chunks AS c
                 JOIN 
                     documents AS d ON c.doc_id = d.doc_id
-                WHERE
-                    d.permission_groups && :allowed_groups
-        """
+                """
         params = {
-            "allowed_groups": allowed_groups,
             "query_embedding": query_vec_str,
             "top_k": k,
         }
@@ -151,7 +122,7 @@ class PgVectorStore(BaseVectorStore):
 
     async def search_session_attachments(
         self,
-        query_embedding: List[float],
+        query: str,
         session_id: str,
         k: int = 2,
     ) -> List[Dict[str, Any]]:
@@ -161,6 +132,7 @@ class PgVectorStore(BaseVectorStore):
 
         보안: 오직 `session_id`가 일치하는 청크만 검색합니다.
         """
+        query_embedding = self.embedding_model.embed_query(query)
         query_vec_str = str(query_embedding)
         logger.debug(
             f"세션 첨부파일(임시) 벡터 검색 시작. k={k}, session_id: {session_id}"

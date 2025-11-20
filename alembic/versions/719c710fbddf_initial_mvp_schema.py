@@ -12,6 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 import pgvector
+from pgvector.sqlalchemy import Vector
+
 
 # revision identifiers, used by Alembic.
 revision: str = "719c710fbddf"
@@ -115,9 +117,7 @@ def upgrade() -> None:
         sa.Column("chunk_id", sa.BIGINT(), sa.Identity(), primary_key=True),
         sa.Column("attachment_id", sa.BIGINT(), nullable=False),
         sa.Column("chunk_text", sa.Text(), nullable=False),
-        sa.Column(
-            "embedding", sa.types.UserDefinedType(), nullable=False
-        ),  # Vector 타입
+        sa.Column("embedding", Vector(768), nullable=False),  # Vector 타입
         sa.Column(
             "extra_metadata", sa.dialects.postgresql.JSONB(), nullable=True
         ),

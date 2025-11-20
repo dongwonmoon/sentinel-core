@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from ..core import factories
+from ..core.database import AsyncSessionLocal
 from ..core.agent import Orchestrator
 from ..core.config import Settings, get_settings
 from ..core.security import verify_token
@@ -47,7 +48,9 @@ def get_agent() -> Orchestrator:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
+    logger.info(
+        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
+    )
     start_time = time.time()
 
     settings = get_settings()
@@ -55,20 +58,16 @@ def get_agent() -> Orchestrator:
     # 1. 팩토리 패턴(Factory Pattern)을 사용하여 설정(config.yml)에 따라 각 컴포넌트를 동적으로 생성합니다.
     #    이를 통해 코드 변경 없이 설정 파일 수정만으로 사용할 LLM, 벡터 저장소 등을 교체할 수 있습니다.
     logger.debug("임베딩 모델 생성 중...")
-    embedding_model = factories.create_embedding_model(
-        settings.embedding, settings, settings.OPENAI_API_KEY
-    )
+    embedding_model = factories.create_embedding_model(settings)
 
     logger.debug("벡터 저장소 생성 중...")
-    vector_store = factories.create_vector_store(
-        settings.vector_store, settings, embedding_model
-    )
+    vector_store = factories.create_vector_store(settings, embedding_model)
 
     logger.debug("LLM 생성 중...")
-    llm = factories.create_llm(settings.llm, settings, settings.OPENAI_API_KEY)
+    llm = factories.create_llm(settings)
 
     logger.debug("리랭커 생성 중...")
-    reranker = factories.create_reranker(settings.reranker)
+    reranker = factories.create_reranker(settings)
 
     # logger.debug("활성화된 도구들 가져오는 중...")
     # tools = factories.get_tools(settings.tools_enabled)
@@ -82,7 +81,9 @@ def get_agent() -> Orchestrator:
     )
 
     end_time = time.time()
-    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
+    logger.info(
+        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
+    )
     return agent
 
 
@@ -114,7 +115,9 @@ async def get_redis_client(
         try:
             yield redis
         except Exception as e:
-            logger.error(f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True)
+            logger.error(
+                f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True
+            )
             raise
         finally:
             # `async with` 블록이 끝나면 클라이언트는 자동으로 풀에 반환되므로,
@@ -125,9 +128,7 @@ async def get_redis_client(
 # --- 요청 단위 의존성 (API 요청마다 생성 및 소멸) ---
 
 
-async def get_db_session(
-    agent: Orchestrator = Depends(get_agent),
-) -> AsyncGenerator[AsyncSession, None]:
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     API 요청마다 새로운 데이터베이스 세션(AsyncSession)을 생성하고,
     요청 처리가 완료되면 세션을 자동으로 닫는 제너레이터(Generator) 의존성입니다.
@@ -135,55 +136,18 @@ async def get_db_session(
     `yield`를 통해 세션을 엔드포인트에 제공하고, 엔드포트의 로직이 모두 실행된 후
     `finally` 블록이 실행되어 세션 리소스를 안전하게 해제합니다.
     이를 통해 세션 유출(Session Leak)을 방지합니다.
-
-    Args:
-        agent (Agent): `get_agent`로부터 주입된 싱글톤 Agent 인스턴스.
-
-    Yields:
-        AsyncSession: 비동기 데이터베이스 작업을 위한 SQLAlchemy 세션 객체.
     """
-    vector_store = agent.vector_store
-    # PgVectorStore 만이 AsyncSession 팩토리를 노출하므로, 다른 벡터 스토어가 활성화된 경우
-    # 잘못된 의존성 사용을 조기에 차단한다.
-    if not isinstance(vector_store, PgVectorStore):
-        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
-        raise HTTPException(
-            status_code=501,
-            detail="Database session is only available when using PgVectorStore.",
-        )
+    session: AsyncSession = AsyncSessionLocal()
 
-    session_local = vector_store.AsyncSessionLocal
-    if not session_local:
-        logger.critical("데이터베이스 세션 팩토리가 초기화되지 않았습니다!")
-        raise HTTPException(
-            status_code=500,
-            detail="Database session factory is not initialized.",
-        )
-
-    session: AsyncSession = session_local()
-    logger.debug(f"DB 세션 [ID: {id(session)}] 생성됨.")
     try:
-        # `yield` 키워드는 제너레이터의 실행을 일시 중지하고, 세션 객체를 FastAPI 경로 함수로 전달합니다.
-        # 경로 함수의 실행이 완료될 때까지 이 함수의 실행은 여기서 멈춥니다.
         yield session
-        # 경로 함수에서 명시적인 예외가 발생하지 않았다면, 모든 DB 변경사항을 커밋합니다.
         await session.commit()
-        logger.debug(f"DB 세션 [ID: {id(session)}] 커밋됨.")
     except Exception as e:
-        # 경로 함수 실행 중 예외가 발생하면, 현재 트랜잭션의 모든 변경사항을 롤백하여
-        # 데이터베이스의 일관성을 유지합니다.
-        logger.error(
-            f"DB 세션 [ID: {id(session)}]에서 예외 발생. 롤백합니다. 에러: {e}",
-            exc_info=True,
-        )
         await session.rollback()
-        # 발생한 예외를 다시 상위로 전달하여 FastAPI의 기본 예외 처리기가 처리하도록 합니다.
+        logger.error(f"DB 세션 작업 중 오류 발생: {e}", exc_info=True)
         raise
     finally:
-        # 요청 처리의 성공/실패 여부와 관계없이, `finally` 블록은 항상 실행됩니다.
-        # 여기서 세션을 닫아 데이터베이스 커넥션을 풀에 반환하고 리소스를 정리합니다.
         await session.close()
-        logger.debug(f"DB 세션 [ID: {id(session)}] 닫힘.")
 
 
 async def get_current_user(

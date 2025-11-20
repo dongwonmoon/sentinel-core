@@ -94,6 +94,9 @@ class User(Base):
     # `back_populates`는 양방향 관계를 설정하여, 양쪽 객체에서 서로를 참조할 수 있게 합니다.
     # `cascade="all, delete-orphan"`: User가 삭제될 때, 관련된 모든 자식 객체도 함께 삭제되도록 합니다.
 
+    sessions: Mapped[List["Session"]] = relationship(
+        "Session", back_populates="user", cascade="all, delete-orphan"
+    )
     # User -> ChatHistory (1:N 관계)
     chat_messages: Mapped[List["ChatHistory"]] = relationship(
         "ChatHistory", back_populates="user", cascade="all, delete-orphan"
@@ -144,6 +147,54 @@ class UserProfile(Base):
         return f"<UserProfile(user_id={self.user_id})>"
 
 
+class Session(Base):
+    """
+    'sessions' 테이블: 채팅 세션의 메타데이터와 상태를 영구 저장합니다.
+    """
+
+    __tablename__ = "sessions"
+
+    session_id: Mapped[str] = mapped_column(
+        Text, primary_key=True, comment="세션 고유 ID (UUID)"
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="세션 소유자",
+    )
+    title: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="세션 제목"
+    )
+
+    context_metadata: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=True,
+        server_default="{}",
+        comment="세션 컨텍스트 (예: doc_ids_filter)",
+    )
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.current_timestamp()
+    )
+
+    # 관계 정의
+    user: Mapped["User"] = relationship("User", back_populates="sessions")
+
+    # 세션이 삭제되면 해당 세션의 메시지와 첨부파일도 같이 삭제 (CASCADE)
+    chat_messages: Mapped[List["ChatHistory"]] = relationship(
+        "ChatHistory", back_populates="session", cascade="all, delete-orphan"
+    )
+    attachments: Mapped[List["SessionAttachment"]] = relationship(
+        "SessionAttachment",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Session(id={self.session_id}, user={self.user_id})>"
+
+
 # ==============================================================================
 # 3. 채팅 및 메모리 관련 모델
 # ==============================================================================
@@ -172,9 +223,9 @@ class ChatHistory(Base):
         comment="메시지를 작성한 사용자 ID (FK to users.user_id)",
     )
     session_id: Mapped[str] = mapped_column(
-        Text,
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
         index=True,
-        nullable=True,
+        nullable=False,
         comment="채팅 세션 ID. 동일한 대화를 그룹화하는 데 사용됩니다.",
     )
     role: Mapped[str] = mapped_column(
@@ -182,7 +233,9 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="메시지 내용"
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -192,6 +245,9 @@ class ChatHistory(Base):
     # --- 관계(Relationship) 정의 ---
     # ChatHistory -> User (N:1 관계)
     user: Mapped["User"] = relationship("User", back_populates="chat_messages")
+    session: Mapped["Session"] = relationship(
+        "Session", back_populates="chat_messages"
+    )
 
     def __repr__(self) -> str:
         return f"<ChatHistory(id={self.message_id}, role='{self.role}')>"
@@ -213,13 +269,14 @@ class SessionAttachment(Base):
         BIGINT, Identity(), primary_key=True, comment="첨부파일 고유 ID (PK)"
     )
     session_id: Mapped[str] = mapped_column(
-        Text, index=True, nullable=False, comment="이 파일이 첨부된 세션 ID"
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.user_id", ondelete="SET NULL"),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
         index=True,
-        nullable=True,  # 소유자가 탈퇴해도 파일은 남을 수 있음
-        comment="첨부한 사용자 ID (FK to users.user_id)",
+        nullable=True,
     )
     file_name: Mapped[str] = mapped_column(
         Text, nullable=False, comment="원본 파일 이름"
@@ -240,6 +297,9 @@ class SessionAttachment(Base):
     # --- 관계(Relationship) 정의 ---
     # SessionAttachment -> User (N:1 관계)
     user: Mapped["User"] = relationship()
+    session: Mapped["Session"] = relationship(
+        "Session", back_populates="attachments"
+    )
     # SessionAttachment -> SessionAttachmentChunk (1:N 관계)
     chunks: Mapped[List["SessionAttachmentChunk"]] = relationship(
         "SessionAttachmentChunk",
@@ -290,6 +350,4 @@ class SessionAttachmentChunk(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
-        )
+        return f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"

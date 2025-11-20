@@ -31,6 +31,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 from sqlalchemy import text
+from celery.signals import worker_process_init
 
 from ..components.llms.base import BaseLLM
 from ..core import factories, prompts
@@ -56,6 +57,55 @@ CODE_LANGUAGE_MAP = {
     ".h": Language.C,
     ".md": Language.MARKDOWN,
 }
+
+# --- 전역 컴포넌트 (캐싱용) ---
+_global_vector_store = None
+_global_text_splitter = None
+
+
+@worker_process_init.connect
+def init_worker(**kwargs):
+    """
+    Celery 워커 프로세스가 시작될 때 한 번만 실행되는 초기화 함수입니다.
+    여기서 무거운 모델(임베딩 등)을 미리 로드하여 전역 변수에 담아둡니다.
+    """
+    global _global_vector_store, _global_text_splitter
+    logger.info(">>> [Worker Init] 컴포넌트 전역 초기화 시작...")
+
+    try:
+        settings = get_settings()
+
+        # 1. 임베딩 모델 생성 (무거움)
+        embedding_model = factories.create_embedding_model(settings)
+
+        # 2. 벡터 스토어 생성
+        _global_vector_store = factories.create_vector_store(
+            settings, embedding_model
+        )
+
+        # 3. 텍스트 스플리터 생성
+        _global_text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=200
+        )
+
+        logger.info(">>> [Worker Init] 컴포넌트 초기화 완료.")
+    except Exception as e:
+        logger.critical(f">>> [Worker Init] 초기화 실패: {e}", exc_info=True)
+        # 초기화 실패 시 프로세스를 종료하여 문제를 알림
+        import sys
+
+        sys.exit(1)
+
+
+def get_worker_components():
+    """전역 초기화된 컴포넌트를 반환하는 헬퍼"""
+    if _global_vector_store is None:
+        # 혹시 모를 초기화 실패 대비 (동기 실행 모드 등)
+        init_worker()
+    return {
+        "vector_store": _global_vector_store,
+        "text_splitter": _global_text_splitter,
+    }
 
 
 async def _load_and_split_documents(
@@ -176,9 +226,9 @@ def process_session_attachment_indexing(
     logger.info(f"[Task {task_id}] 파일 인덱싱 시작: {file_name}")
 
     try:
-        components = _initialize_components_for_task()
-        vector_store = components["vector_store"]
-        text_splitter = components["text_splitter_default"]
+        comps = get_worker_components()
+        vector_store = comps["vector_store"]
+        text_splitter = comps["text_splitter"]
 
         # 1. 문서 로드 및 분할 (HyDE 없음)
         chunks = asyncio.run(

@@ -30,10 +30,11 @@ from fastapi import (
     Form,
 )
 from fastapi.responses import StreamingResponse
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import dependencies, schemas
-from ...core.agent import Agent
+from ...core.agent import Orchestrator
 from ...core.logger import get_logger
 from ...services import chat_service
 from ...worker import tasks
@@ -55,9 +56,8 @@ async def query_agent(
     body: schemas.QueryRequest,
     background_tasks: BackgroundTasks,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
-    agent: Agent = Depends(dependencies.get_agent),
+    agent: Orchestrator = Depends(dependencies.get_agent),
     db_session: AsyncSession = Depends(dependencies.get_db_session),
-    redis: aioredis.Redis = Depends(dependencies.get_redis_client),
 ) -> StreamingResponse:
     """
     에이전트에게 질문(Query)을 보내고, 답변을 실시간 스트리밍 방식으로 반환합니다.
@@ -87,7 +87,6 @@ async def query_agent(
     try:
         # LangGraph state는 Redis 세션 컨텍스트, DB 히스토리, 사용자 프로필을 한꺼번에 모아 만든다.
         inputs = await chat_service.build_stateful_agent_inputs(
-            redis=redis,
             db_session=db_session,
             user_id=current_user.user_id,
             session_id=body.session_id,
@@ -104,7 +103,9 @@ async def query_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to build agent context.",
         )
-    logger.debug(f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료.")
+    logger.debug(
+        f"세션 '{body.session_id}'에 대한 에이전트 입력 데이터 구성 완료."
+    )
 
     # generator에서 발생한 이벤트를 그대로 SSE로 흘려보낸다.
     response_generator = chat_service.stream_agent_response(
@@ -127,44 +128,39 @@ async def update_session_context(
     session_id: str,
     body: schemas.SessionContextUpdate,
     current_user: schemas.UserInDB = Depends(dependencies.get_current_user),
-    redis: aioredis.Redis = Depends(dependencies.get_redis_client),
+    db_session: AsyncSession = Depends(dependencies.get_db_session),
 ):
     """
-    채팅 세션의 상태(예: RAG 문서 필터)를 서버(Redis)에 저장(Stateful)합니다.
-    프론트엔드에서 사용자가 RAG 문서 필터를 변경할 때 이 API를 호출하여,
-    이후의 모든 RAG 검색에 해당 필터가 적용되도록 합니다.
-
-    Args:
-        session_id: 컨텍스트를 업데이트할 세션의 ID.
-        body: 업데이트할 컨텍스트 정보 (현재는 `doc_ids_filter`만 포함).
-        current_user: 인증된 사용자 정보.
-        redis: Redis 클라이언트 인스턴스.
+    PostgreSQL의 sessions 테이블에 상태를 영구 저장합니다.
     """
-    logger.info(
-        f"세션 '{session_id}' (사용자: '{current_user.username}')의 컨텍스트 업데이트 시도."
-    )
-    session_key = f"session_context:{session_id}"
+    logger.info(f"세션 '{session_id}' 컨텍스트 업데이트 (DB)")
 
     try:
-        # 세션 컨텍스트는 자주 변경될 수 있고 영속성이 중요하지 않으므로,
-        # 빠른 읽기/쓰기가 가능한 Redis를 사용하는 것이 DB보다 효율적입니다.
-        existing_context_raw = await redis.get(session_key)
-        context = json.loads(existing_context_raw) if existing_context_raw else {}
-        context["doc_ids_filter"] = body.doc_ids_filter
+        # PostgreSQL의 JSONB 컬럼 업데이트
+        stmt = (
+            update(models.Session)
+            .where(
+                models.Session.session_id == session_id,
+                models.Session.user_id == current_user.user_id,
+            )
+            .values(context_metadata={"doc_ids_filter": body.doc_ids_filter})
+            .execution_options(synchronize_session=False)
+        )
 
-        # 업데이트된 컨텍스트를 Redis에 24시간 만료 시간으로 저장합니다.
-        await redis.set(session_key, json.dumps(context), ex=86400)
+        result = await db_session.execute(stmt)
 
-        logger.debug(f"세션 컨텍스트 업데이트 완료: '{session_key}' = {context}")
-        return None  # 성공 시 204 No Content 응답
+        if result.rowcount == 0:
+            # 세션이 없거나 권한이 없는 경우
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        await db_session.commit()
+        return None
 
     except Exception as e:
-        logger.error(
-            f"세션 '{session_id}'의 컨텍스트 업데이트 실패: {e}", exc_info=True
-        )
+        await db_session.rollback()
+        logger.error(f"세션 컨텍스트 DB 업데이트 실패: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update session context.",
+            status_code=500, detail="Failed to update session context."
         )
 
 
@@ -237,7 +233,9 @@ async def attach_file_to_session(
         logger.debug(f"DB 레코드 생성 완료 (Attachment ID: {attachment_id})")
     except Exception as e:
         logger.error(f"첨부파일 DB 레코드 생성 실패: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="DB record creation failed.")
+        raise HTTPException(
+            status_code=500, detail="DB record creation failed."
+        )
 
     # 시간이 오래 걸리는 인덱싱 작업을 Celery 워커에게 위임하고, API는 즉시 응답합니다.
     # 이를 통해 클라이언트는 긴 시간 동안 응답을 기다릴 필요가 없습니다.
@@ -246,7 +244,9 @@ async def attach_file_to_session(
         file_path=str(file_path),
         file_name=file.filename,
     )
-    logger.info(f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다.")
+    logger.info(
+        f"임시 인덱싱 작업(Task ID: {task.id})을 Celery에 위임했습니다."
+    )
 
     return {
         "status": "success",
@@ -271,7 +271,9 @@ async def attach_github_to_session(
 ):
     """GitHub 리포지토리를 세션에 첨부하고 인덱싱을 시작합니다."""
     repo_name = body.repo_url.path.split("/")[-1].replace(".git", "")
-    logger.info(f"세션 '{session_id}'에 GitHub 리포지토리 '{repo_name}' 첨부 시도.")
+    logger.info(
+        f"세션 '{session_id}'에 GitHub 리포지토리 '{repo_name}' 첨부 시도."
+    )
 
     # 1. DB 레코드 생성
     attachment = await chat_service.create_session_attachment(
@@ -371,7 +373,9 @@ async def get_chat_sessions(
     Returns:
         schemas.ChatSessionListResponse: 채팅 세션 목록을 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 채팅 세션 목록 조회를 시작합니다."
+    )
     sessions = await chat_service.fetch_user_sessions(
         db_session=session, user_id=current_user.user_id
     )
@@ -460,11 +464,15 @@ async def get_user_profile(
     Returns:
         schemas.UserProfileResponse: 사용자의 프로필 텍스트를 포함하는 응답.
     """
-    logger.info(f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필 조회를 요청했습니다."
+    )
     profile_text = await chat_service.fetch_user_profile(
         db_session=session, user_id=current_user.user_id
     )
-    logger.info(f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필을 성공적으로 조회했습니다."
+    )
     return schemas.UserProfileResponse(profile_text=profile_text)
 
 
@@ -486,7 +494,9 @@ async def update_user_profile(
         current_user: 인증된 사용자 정보.
         session: DB 작업을 위한 비동기 세션.
     """
-    logger.info(f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다.")
+    logger.info(
+        f"사용자 '{current_user.username}'의 프로필 업데이트를 시작합니다."
+    )
     await chat_service.upsert_user_profile(
         db_session=session,
         user_id=current_user.user_id,

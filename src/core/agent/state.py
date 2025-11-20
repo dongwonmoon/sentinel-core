@@ -13,9 +13,13 @@ class AgentState(TypedDict):
     # --- 요청 입력 (그래프 시작 시 주입) ---
     question: str  # 사용자의 현재 질문
     top_k: int  # RAG 검색 결과에서 최종적으로 사용할 상위 K개 문서 수
-    doc_ids_filter: Optional[List[str]]  # RAG 검색 범위를 특정 문서 ID로 제한할 때 사용
+    doc_ids_filter: Optional[
+        List[str]
+    ]  # RAG 검색 범위를 특정 문서 ID로 제한할 때 사용
     chat_history: List[Dict[str, str]]  # 전체 대화 기록
-    user_profile: Optional[str]  # 사용자 프로필 정보 (개인화된 답변 생성에 사용)
+    user_profile: Optional[
+        str
+    ]  # 사용자 프로필 정보 (개인화된 답변 생성에 사용)
     user_id: Optional[str]  # 사용자 ID
     session_id: Optional[str]  # 현재 채팅 세션 ID
 

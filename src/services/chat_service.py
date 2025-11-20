@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from typing import AsyncGenerator, Optional, Dict, Any
-import redis.asyncio as aioredis
 
 from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import func, select
@@ -23,9 +22,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api import schemas
-from ..core.agent import Agent
+from ..core.agent import Orchestrator
 from ..core.logger import get_logger
 from ..db import models
+from ..db.models import Session
 
 logger = get_logger(__name__)
 
@@ -39,7 +39,6 @@ TOOL_NODES = [
 
 
 async def build_stateful_agent_inputs(
-    redis: aioredis.Redis,
     db_session: AsyncSession,
     user_id: int,
     session_id: str,
@@ -64,26 +63,23 @@ async def build_stateful_agent_inputs(
     Returns:
         Dict[str, Any]: AgentState를 구성하는 데 사용될 완전한 입력 딕셔너리.
     """
-    session_key = f"session_context:{session_id}"
-
-    # Redis에서 현재 세션의 컨텍스트(예: RAG 문서 필터)를 로드합니다.
+    # 1. DB에서 세션 컨텍스트(doc_ids_filter 등) 조회
     doc_ids_filter = None
     try:
-        context_raw = await redis.get(session_key)
-        if context_raw:
-            context = json.loads(context_raw)
-            doc_ids_filter = context.get("doc_ids_filter")
-            logger.debug(
-                f"세션 '{session_id}'의 컨텍스트를 Redis에서 로드했습니다."
-            )
-    except Exception as e:
-        # Redis는 세션 컨텍스트와 같은 비영구적 데이터를 저장하는 데 사용됩니다.
-        # 만약 Redis에 장애가 발생하더라도, 채팅의 핵심 기능(LLM 호출, DB 기록)은
-        # 계속 작동해야 합니다. 따라서 오류를 로깅만 하고 무시하여 서비스의
-        # 가용성을 높입니다. 이 경우 RAG 필터링 등 일부 기능이 동작하지 않을 수 있습니다.
-        logger.warning(f"세션 '{session_id}'의 Redis 컨텍스트 로드 실패: {e}")
+        stmt = select(Session.context_metadata).where(
+            Session.session_id == session_id, Session.user_id == user_id
+        )
+        result = await db_session.execute(stmt)
+        context_metadata = result.scalar()  # 없으면 None
 
-    # DB에서 이전 대화 기록을 로드합니다.
+        if context_metadata:
+            doc_ids_filter = context_metadata.get("doc_ids_filter")
+            logger.debug(f"DB에서 세션 '{session_id}' 컨텍스트 로드 완료.")
+
+    except Exception as e:
+        logger.warning(f"세션 컨텍스트 로드 실패 (기본값 사용): {e}")
+
+    # 2. 대화 기록 로드 (기존 로직 유지)
     chat_history_models = await fetch_chat_history(
         db_session=db_session, user_id=user_id, session_id=session_id
     )
@@ -92,7 +88,6 @@ async def build_stateful_agent_inputs(
         for msg in chat_history_models
     ]
 
-    # 모든 정보를 종합하여 AgentState의 입력으로 사용될 딕셔너리를 구성합니다.
     inputs = {
         "question": query,
         "top_k": top_k,
@@ -107,7 +102,7 @@ async def build_stateful_agent_inputs(
 
 
 async def stream_agent_response(
-    agent: Agent,
+    agent: Orchestrator,
     inputs: Dict[str, Any],
     background_tasks: BackgroundTasks,
     user_id: int,
@@ -294,7 +289,7 @@ async def create_session_attachment(
 
 
 async def save_chat_messages_task(
-    agent: Agent,
+    agent: Orchestrator,
     user_id: int,
     session_id: str,
     user_query: str,

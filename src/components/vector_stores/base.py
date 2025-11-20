@@ -34,8 +34,7 @@ class BaseVectorStore(ABC):
     @abstractmethod
     async def search(
         self,
-        query_embedding: List[float],
-        allowed_groups: List[str],
+        query: str,
         k: int = 4,
         doc_ids_filter: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
@@ -55,4 +54,13 @@ class BaseVectorStore(ABC):
             List[Dict[str, Any]]: 검색된 문서 청크 정보의 리스트.
                                   각 딕셔너리는 'chunk_text', 'metadata', 'score' 등을 포함합니다.
         """
+        pass
+
+    @abstractmethod
+    async def search_session_attachments(
+        self,
+        query: str,
+        session_id: str,
+        k: int = 4,
+    ) -> List[Dict[str, Any]]:
         pass
