@@ -11,7 +11,7 @@ from alembic import context
 # 프로젝트 루트를 sys.path에 추가하여 'src' 모듈을 찾을 수 있도록 함
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
 from src.core.config import get_settings
-from src.db.models import Base 
+from src.db.models import Base
 
 settings = get_settings()
 

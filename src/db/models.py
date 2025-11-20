@@ -182,7 +182,9 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="메시지 내용"
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -293,6 +295,4 @@ class SessionAttachmentChunk(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
-        )
+        return f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"

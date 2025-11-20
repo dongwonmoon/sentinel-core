@@ -85,7 +85,9 @@ async def _load_and_split_documents(
                         가상 질문이 포함된 `Document` 객체의 리스트.
     """
     file_ext = os.path.splitext(file_name)[1].lower()
-    logger.debug(f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'")
+    logger.debug(
+        f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'"
+    )
 
     # 1. 파일 확장자에 따라 적절한 로더 선택
     # PDF, Markdown 등 특정 형식에 맞는 파서를 사용하여 텍스트를 정확하게 추출합니다.
@@ -118,7 +120,9 @@ async def _load_and_split_documents(
             )
 
     split_chunks = splitter.split_documents(docs)
-    logger.debug(f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다.")
+    logger.debug(
+        f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다."
+    )
 
     return split_chunks
 
@@ -187,7 +191,9 @@ def process_session_attachment_indexing(
 
         # 2. 임베딩 생성
         texts_to_embed = [chunk.page_content for chunk in chunks]
-        embeddings = vector_store.embedding_model.embed_documents(texts_to_embed)
+        embeddings = vector_store.embedding_model.embed_documents(
+            texts_to_embed
+        )
 
         # 3. DB 저장 (청크 + 임베딩)
         chunks_to_store = [
@@ -234,7 +240,9 @@ def process_session_attachment_indexing(
 
         # 실패 상태 업데이트
         async def set_failed():
-            components = _initialize_components_for_task()  # 세션 생성을 위해 필요
+            components = (
+                _initialize_components_for_task()
+            )  # 세션 생성을 위해 필요
             vs = components["vector_store"]
             async with vs.AsyncSessionLocal() as session:
                 async with session.begin():
@@ -305,14 +313,18 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
                         )
 
         if not all_chunks_to_index:
-            logger.warning(f"'{repo_name}' 리포지토리에서 인덱싱할 콘텐츠가 없습니다.")
+            logger.warning(
+                f"'{repo_name}' 리포지토리에서 인덱싱할 콘텐츠가 없습니다."
+            )
             return {
                 "status": "warning",
                 "message": "No content could be indexed.",
             }
 
         texts_to_embed = [chunk.page_content for chunk in all_chunks_to_index]
-        chunk_embeddings = vector_store.embedding_model.embed_documents(texts_to_embed)
+        chunk_embeddings = vector_store.embedding_model.embed_documents(
+            texts_to_embed
+        )
 
         # 3. [핵심 수정] 'session_attachment_chunks' 테이블에 저장
         # (process_session_directory_indexing의 저장 로직과 동일)
@@ -323,7 +335,9 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
                 "embedding": str(embedding_vector),
                 "extra_metadata": json.dumps(chunk.metadata),
             }
-            for chunk, embedding_vector in zip(all_chunks_to_index, chunk_embeddings)
+            for chunk, embedding_vector in zip(
+                all_chunks_to_index, chunk_embeddings
+            )
         ]
 
         async def save_chunks_to_db():
@@ -349,7 +363,9 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
         asyncio.run(save_chunks_to_db())
 
         success_message = f"'{repo_name}' 리포지토리 인덱싱 완료. {len(chunks_to_store)}개 청크 저장됨."
-        logger.info(f"--- [Celery Task ID: {task_id}] 세션 GitHub 인덱싱 성공 ---")
+        logger.info(
+            f"--- [Celery Task ID: {task_id}] 세션 GitHub 인덱싱 성공 ---"
+        )
         return {"status": "success", "message": success_message}
 
     except GitCommandError as e:

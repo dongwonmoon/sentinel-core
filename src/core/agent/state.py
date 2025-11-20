@@ -34,9 +34,13 @@ class AgentState(TypedDict):
     # --- 요청 입력 (그래프 시작 시 주입) ---
     question: str  # 사용자의 현재 질문
     top_k: int  # RAG 검색 결과에서 최종적으로 사용할 상위 K개 문서 수
-    doc_ids_filter: Optional[List[str]]  # RAG 검색 범위를 특정 문서 ID로 제한할 때 사용
+    doc_ids_filter: Optional[
+        List[str]
+    ]  # RAG 검색 범위를 특정 문서 ID로 제한할 때 사용
     chat_history: List[Dict[str, str]]  # 전체 대화 기록
-    user_profile: Optional[str]  # 사용자 프로필 정보 (개인화된 답변 생성에 사용)
+    user_profile: Optional[
+        str
+    ]  # 사용자 프로필 정보 (개인화된 답변 생성에 사용)
     user_id: Optional[str]  # 사용자 ID
     session_id: Optional[str]  # 현재 채팅 세션 ID
 
@@ -55,7 +59,9 @@ class AgentState(TypedDict):
     # --- 도구 실행 노드들의 출력 ---
     tool_outputs: Dict[str, Any]  # 각 도구의 실행 결과를 저장하는 딕셔너리
     code_input: Optional[str]  # CodeExecution 도구가 생성한 코드
-    failed_tools: Optional[List[str]]  # 실행에 실패한 도구 목록 (재라우팅 시 참고)
+    failed_tools: Optional[
+        List[str]
+    ]  # 실행에 실패한 도구 목록 (재라우팅 시 참고)
 
     # --- 최종 출력 ---
     answer: str  # 에이전트가 생성한 최종 답변

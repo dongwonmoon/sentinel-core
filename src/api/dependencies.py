@@ -62,7 +62,9 @@ def get_agent() -> Agent:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
+    logger.info(
+        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
+    )
     start_time = time.time()
 
     settings = get_settings()
@@ -80,9 +82,7 @@ def get_agent() -> Agent:
     )
 
     logger.debug("LLM 생성 중...")
-    llm = factories.create_llm(
-        settings.llm, settings, settings.OPENAI_API_KEY
-    )
+    llm = factories.create_llm(settings.llm, settings, settings.OPENAI_API_KEY)
 
     logger.debug("리랭커 생성 중...")
     reranker = factories.create_reranker(settings.reranker)
@@ -99,7 +99,9 @@ def get_agent() -> Agent:
     )
 
     end_time = time.time()
-    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
+    logger.info(
+        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
+    )
     return agent
 
 
@@ -131,7 +133,9 @@ async def get_redis_client(
         try:
             yield redis
         except Exception as e:
-            logger.error(f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True)
+            logger.error(
+                f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True
+            )
             raise
         finally:
             # `async with` 블록이 끝나면 클라이언트는 자동으로 풀에 반환되므로,
@@ -163,7 +167,9 @@ async def get_db_session(
     # PgVectorStore 만이 AsyncSession 팩토리를 노출하므로, 다른 벡터 스토어가 활성화된 경우
     # 잘못된 의존성 사용을 조기에 차단한다.
     if not isinstance(vector_store, PgVectorStore):
-        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
+        logger.error(
+            "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."
+        )
         raise HTTPException(
             status_code=501,
             detail="Database session is only available when using PgVectorStore.",
@@ -253,9 +259,7 @@ async def get_current_user(
         logger.warning(f"비활성화된 사용자 '{user.username}'의 접근 시도.")
         raise HTTPException(status_code=400, detail="비활성화된 사용자입니다.")
 
-    logger.debug(
-        f"사용자 '{user.username}' 인증 및 정보 조회 완료."
-    )
+    logger.debug(f"사용자 '{user.username}' 인증 및 정보 조회 완료.")
     return user
 
 
@@ -269,7 +273,9 @@ async def enforce_chat_rate_limit(
     try:
         # `rate_limiter`는 Redis를 사용하여 사용자 ID별로 'chat' 유형의 요청 횟수를 추적합니다.
         # 설정된 시간 내에 허용된 요청 횟수를 초과하면 `ValueError`를 발생시킵니다.
-        await rate_limiter.assert_within_limit("chat", str(current_user.user_id))
+        await rate_limiter.assert_within_limit(
+            "chat", str(current_user.user_id)
+        )
         logger.debug(f"사용자 '{current_user.username}'의 채팅 속도 제한 통과.")
     except ValueError as exc:
         logger.warning(
@@ -287,8 +293,12 @@ async def enforce_document_rate_limit(
     """문서 관련 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
     try:
         # `rate_limiter`는 Redis를 사용하여 사용자 ID별로 'documents' 유형의 요청 횟수를 추적합니다.
-        await rate_limiter.assert_within_limit("documents", str(current_user.user_id))
-        logger.debug(f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과.")
+        await rate_limiter.assert_within_limit(
+            "documents", str(current_user.user_id)
+        )
+        logger.debug(
+            f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과."
+        )
     except ValueError as exc:
         logger.warning(
             f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}"

@@ -133,6 +133,7 @@ class LLMSettings(BaseModel):
         0.0, description="모델의 창의성 조절 (0.0: 결정적, 1.0: 창의적)"
     )
 
+
 class EmbeddingSettings(BaseModel):
     """텍스트 임베딩 모델에 대한 설정"""
 

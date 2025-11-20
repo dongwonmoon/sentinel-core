@@ -126,11 +126,15 @@ class SessionContextUpdate(BaseModel):
 class Source(BaseModel):
     """답변의 출처(Source) 정보를 담는 스키마입니다."""
 
-    chunk_text: str = Field(..., description="RAG를 통해 검색된 원본 텍스트 청크")
+    chunk_text: str = Field(
+        ..., description="RAG를 통해 검색된 원본 텍스트 청크"
+    )
     metadata: Dict[str, Any] = Field(
         ..., description="청크에 대한 추가 정보 (예: 파일명, 페이지 번호)"
     )
-    score: float = Field(..., description="쿼리와의 유사도 점수 (높을수록 관련성 높음)")
+    score: float = Field(
+        ..., description="쿼리와의 유사도 점수 (높을수록 관련성 높음)"
+    )
 
 
 class UserProfileResponse(BaseModel):

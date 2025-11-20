@@ -31,7 +31,10 @@ def upgrade() -> None:
         sa.Column("username", sa.String(100), nullable=False),
         sa.Column("hashed_password", sa.Text(), nullable=False),
         sa.Column(
-            "is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False
+            "is_active",
+            sa.Boolean(),
+            server_default=sa.text("true"),
+            nullable=False,
         ),
         sa.Column(
             "created_at",
@@ -51,7 +54,9 @@ def upgrade() -> None:
             sa.TIMESTAMP(timezone=True),
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.user_id"], ondelete="CASCADE"
+        ),
     )
 
     # 4. chat_history 테이블 (단기 기억)
@@ -67,29 +72,41 @@ def upgrade() -> None:
             sa.TIMESTAMP(timezone=True),
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.user_id"], ondelete="CASCADE"
+        ),
     )
-    op.create_index("ix_chat_history_session_id", "chat_history", ["session_id"])
+    op.create_index(
+        "ix_chat_history_session_id", "chat_history", ["session_id"]
+    )
     op.create_index("ix_chat_history_user_id", "chat_history", ["user_id"])
 
     # 5. session_attachments 테이블 (세션 파일 관리)
     op.create_table(
         "session_attachments",
-        sa.Column("attachment_id", sa.BIGINT(), sa.Identity(), primary_key=True),
+        sa.Column(
+            "attachment_id", sa.BIGINT(), sa.Identity(), primary_key=True
+        ),
         sa.Column("session_id", sa.Text(), nullable=False),
         sa.Column("user_id", sa.BIGINT(), nullable=True),
         sa.Column("file_name", sa.Text(), nullable=False),
         sa.Column("file_path", sa.Text(), nullable=False),  # 로컬 경로 또는 URL
-        sa.Column("status", sa.String(50), server_default="indexing", nullable=False),
+        sa.Column(
+            "status", sa.String(50), server_default="indexing", nullable=False
+        ),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
             server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.user_id"], ondelete="SET NULL"
+        ),
     )
     op.create_index(
-        "ix_session_attachments_session_id", "session_attachments", ["session_id"]
+        "ix_session_attachments_session_id",
+        "session_attachments",
+        ["session_id"],
     )
 
     # 6. session_attachment_chunks 테이블 (벡터 저장소)
@@ -101,9 +118,13 @@ def upgrade() -> None:
         sa.Column(
             "embedding", sa.types.UserDefinedType(), nullable=False
         ),  # Vector 타입
-        sa.Column("extra_metadata", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column(
+            "extra_metadata", sa.dialects.postgresql.JSONB(), nullable=True
+        ),
         sa.ForeignKeyConstraint(
-            ["attachment_id"], ["session_attachments.attachment_id"], ondelete="CASCADE"
+            ["attachment_id"],
+            ["session_attachments.attachment_id"],
+            ondelete="CASCADE",
         ),
     )
     # 벡터 컬럼 정의 (UserDefinedType 우회)
