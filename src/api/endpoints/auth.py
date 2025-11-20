@@ -25,7 +25,7 @@ logger = get_logger(__name__)
 async def _get_user_from_db(
     session: AsyncSession, username: str
 ) -> schemas.UserInDB | None:
-    """[헬퍼 함수] 데이터베이스에서 사용자 이름으로 사용자 정보를 조회합니다."""
+    """데이터베이스에서 사용자 이름으로 사용자 정보를 조회하는 헬퍼 함수."""
     logger.debug(f"데이터베이스에서 사용자 '{username}' 조회를 시도합니다.")
     stmt = text("SELECT * FROM users WHERE username = :username")
     result = await session.execute(stmt, {"username": username})
@@ -53,6 +53,10 @@ async def register_user(
 ) -> schemas.User:
     """
     새로운 사용자를 시스템에 등록합니다.
+
+    - **사용자 이름 중복 확인**: 이미 존재하는 사용자 이름으로는 등록할 수 없습니다.
+    - **비밀번호 해싱**: 비밀번호는 `bcrypt`로 해싱되어 안전하게 저장됩니다.
+    - **데이터베이스 저장**: 사용자 정보를 `users` 테이블에 저장합니다.
     """
     logger.info(f"새 사용자 등록을 시도합니다: '{user_create.username}'")
 
@@ -138,6 +142,9 @@ async def login_for_access_token(
 ) -> Dict[str, str]:
     """
     사용자 이름과 비밀번호로 로그인하여 JWT 액세스 토큰을 발급받습니다.
+
+    FastAPI의 `OAuth2PasswordRequestForm`을 사용하여 `x-www-form-urlencoded` 형식의
+    로그인 요청을 처리합니다.
     """
     username = form_data.username
     password = form_data.password
