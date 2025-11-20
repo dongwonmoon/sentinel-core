@@ -9,8 +9,6 @@ SQLAlchemy의 선언적 매핑(Declarative Mapping)을 사용하여 각 클래�
 정의된 모델 목록:
 - Base: 모든 모델이 상속하는 기본 클래스.
 - User: 사용자 정보 및 인증.
-- Document: 영구 지식베이스(KB)에 저장된 문서의 메타 정보.
-- DocumentChunk: 분할된 영구 문서 조각과 그 임베딩 벡터.
 - ChatHistory: 모든 채팅 메시지 기록.
 - UserProfile: 사용자별 프로필 정보 (LLM 컨텍스트용).
 - SessionAttachment: 채팅 세션에 임시로 첨부된 파일.

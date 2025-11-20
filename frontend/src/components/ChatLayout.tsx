@@ -44,7 +44,7 @@ export default function ChatLayout() {
   // `useChatSession`: 현재 활성화된(`activeSessionId`) 단일 채팅 세션의 상세 데이터를 관리하는 훅입니다.
   // 메시지 목록, 첨부파일 목록, 메시지 전송 함수, 로딩 상태 등을 모두 포함하고 있습니다.
   // 이 훅 내부에서 메시지 스트리밍, 첨부파일 상태 폴링 등 복잡한 로직을 모두 처리합니다.
-  const session = useChatSession(token, activeSessionId);
+  const session = useChatSession(token, activeSessionId, setActiveSessionId);
 
   // --- 3. 이벤트 핸들러 ---
 
@@ -78,7 +78,6 @@ export default function ChatLayout() {
         />
         {/* 중앙 채팅창: 메시지 목록, 입력창, 파일 업로드 버튼 등 포함 */}
         <ChatWindow
-          // ⬇️ document, selectedDoc, onDocChange 등 props 제거
           messages={session?.messages ?? []}
           loading={session?.loading ?? false}
           sendMessage={session.sendMessage}
@@ -95,8 +94,6 @@ export default function ChatLayout() {
           />
         </div>
         
-        {/* ⬇️ right-panel-wrapper div 전체 제거 */}
-
         {/* 앱 전체 알림(Notification)을 호스팅하는 컴포넌트 */}
         <NotificationHost />
       </div>

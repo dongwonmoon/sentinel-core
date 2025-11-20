@@ -144,17 +144,6 @@ export default function MessageList({ messages, sendMessage }: Props) {
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
 
   /**
-   * 마지막 사용자 메시지를 기반으로 AI 응답을 다시 생성하도록 요청합니다.
-   */
-  const handleRegenerate = () => {
-    // 메시지 목록을 역순으로 순회하여 마지막 'user' 메시지를 찾습니다.
-    const lastUserMessage = [...messages].reverse().find((msg) => msg.role === "user");
-    if (lastUserMessage) {
-      sendMessage({ query: lastUserMessage.content });
-    }
-  };
-
-  /**
    * 메시지 목록을 부드럽게 맨 아래로 스크롤합니다.
    */
   const scrollToBottom = () => {
@@ -264,28 +253,6 @@ export default function MessageList({ messages, sendMessage }: Props) {
                   {msg.content}
                 </ReactMarkdown>
               )}
-
-              {/* 복사 버튼 (향후 기능) */}
-              {/* {msg.role === "assistant" && (
-                <button
-                  onClick={() => navigator.clipboard.writeText(msg.content)}
-                  className="copy-message-button"
-                  title="메시지 복사"
-                >
-                  📋
-                </button>
-              )} */}
-
-              {/* 재생성 버튼 (향후 기능) */}
-              {/* {msg.role === "user" && (
-                <button
-                  onClick={handleRegenerate}
-                  className="regenerate-message-button"
-                  title="메시지 재생성"
-                >
-                  🔄
-                </button>
-              )} */}
 
               {/* RAG 출처(Source)가 있는 경우, 알약(pill) 형태로 표시합니다. */}
               {msg.sources && msg.sources.length > 0 && (

@@ -8,7 +8,6 @@ Celery 애플리케이션 인스턴스를 생성하고 설정합니다.
 """
 
 from celery import Celery
-from celery.schedules import crontab
 
 from ..core.config import get_settings
 from ..core.logger import get_logger

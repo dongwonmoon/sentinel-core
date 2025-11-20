@@ -6,21 +6,6 @@
  */
 
 /**
- * 백엔드 `/admin/approve_promotion` API의 요청 본문(Request Body) 스키마입니다.
- * 임시 세션 첨부파일을 영구적인 지식 베이스(KB) 문서로 승격시킬 때 사용됩니다.
- */
-export type PromotionApprovalRequest = {
-  /**
-   * 영구 지식 베이스에 저장될 문서의 새로운 고유 ID.
-   */
-  kb_doc_id: string;
-  /**
-   * 이 문서에 접근할 수 있는 사용자 권한 그룹의 목록입니다.
-   */
-  permission_groups: string[];
-};
-
-/**
  * 백엔드 `/api/auth/me` API의 응답(Response) 스키마입니다.
  * 현재 로그인된 사용자의 상세 정보를 나타냅니다.
  */

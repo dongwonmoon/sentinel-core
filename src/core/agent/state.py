@@ -1,7 +1,6 @@
 """Agent의 상태 정의 및 관련 유틸리티 함수."""
 
 from typing import TypedDict, List, Dict, Any, Literal, Optional
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_core.utils.pydantic import PydanticBaseModel
 
 
@@ -69,18 +68,3 @@ class AgentState(TypedDict):
 
     # --- 최종 출력 ---
     answer: str  # 에이전트가 생성한 최종 답변
-
-
-def convert_history_dicts_to_messages(
-    history_dicts: List[Dict[str, str]],
-) -> List[BaseMessage]:
-    """채팅 기록(딕셔너리 리스트)을 LangChain 메시지 객체 리스트로 변환합니다."""
-    messages = []
-    for msg in history_dicts:
-        # 'role' 값에 따라 적절한 LangChain 메시지 타입(HumanMessage, AIMessage)으로 매핑합니다.
-        # 이는 LangChain의 LLM 및 프롬프트 템플릿과 호환성을 맞추기 위함입니다.
-        if msg.get("role") == "user":
-            messages.append(HumanMessage(content=msg.get("content", "")))
-        elif msg.get("role") == "assistant":
-            messages.append(AIMessage(content=msg.get("content", "")))
-    return messages

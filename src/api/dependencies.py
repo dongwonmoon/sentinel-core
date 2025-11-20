@@ -15,7 +15,6 @@ FastAPI 의존성 주입(Dependency Injection) 시스템을 위한 "제공자(Pr
 from functools import lru_cache
 from typing import AsyncGenerator
 import time
-import json
 import redis.asyncio as aioredis
 
 from fastapi import Depends, HTTPException, status
@@ -284,31 +283,6 @@ async def get_current_user(
         f"사용자 '{user.username}' 인증 및 정보 조회 완료. 권한: {user.permission_groups}"
     )
     return user
-
-
-async def get_admin_user(
-    current_user: schemas.UserInDB = Depends(get_current_user),
-) -> schemas.UserInDB:
-    """
-    현재 인증된 사용자가 'admin' 권한 그룹을 가지고 있는지 확인하는 의존성입니다.
-    관리자 권한이 없으면 `HTTPException` (403 Forbidden)을 발생시킵니다.
-
-    Args:
-        current_user: `get_current_user`로부터 주입된 현재 사용자 정보.
-
-    Returns:
-        schemas.UserInDB: 관리자 권한이 확인된 사용자 정보.
-    """
-    if "admin" not in current_user.permission_groups:
-        logger.warning(
-            f"사용자 '{current_user.username}'가 관리자 전용 엔드포인트에 접근 시도 (권한 없음)."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="관리자 권한이 필요합니다.",
-        )
-    logger.debug(f"관리자 접근 확인: 사용자 '{current_user.username}'")
-    return current_user
 
 
 # --- 속도 제한(Rate Limit) 의존성 ---

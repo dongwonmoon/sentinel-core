@@ -65,14 +65,13 @@ export default function Modal({
 
   return (
     // 모달 오버레이: 배경을 어둡게 하고, 클릭 시 `onClose`를 호출하여 모달을 닫습니다.
-    <div className="app-model-overlay" style={{ zIndex: 20 }} onClick={onClose}>
-      {/* 
-        모달 컨텐츠 영역: 실제 내용이 표시되는 부분입니다.
+    <div className="app-modal-overlay" style={{ zIndex: 20 }} onClick={onClose}>
+      {/* 모달 컨텐츠 영역: 실제 내용이 표시되는 부분입니다.
         `onClick` 이벤트에 `stopPropagation`을 호출하여,
         모달 내부를 클릭했을 때 오버레이의 `onClick`이 실행되어 모달이 닫히는 것을 방지합니다.
       */}
       <div
-        className="app-model-content"
+        className="app-modal-content"
         style={{
           width,
           maxHeight,

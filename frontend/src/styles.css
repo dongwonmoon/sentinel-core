@@ -313,7 +313,7 @@ select:focus {
   gap: 1rem; /* 아바타와 버블 사이 간격 */
 }
 .message.user { 
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-direction: row-reverse;
 }
 .message.assistant { justify-content: flex-start; }
@@ -651,4 +651,123 @@ select:focus {
   border: 1px solid var(--color-panel-border); /* ⬅️ 연한 테두리 */
   box-shadow: 0 40px 80px rgba(5, 6, 14, 0.2); /* ⬅️ 그림자 약화 */
   color: var(--color-text-primary); /* ⬅️ 기본 텍스트 색상 */
+}
+
+/* --- Gemini 스타일 모달 (SessionUploadModal) --- */
+
+.gemini-modal-container {
+  padding: 1rem;
+  font-family: "Google Sans", "Pretendard", sans-serif; /* 구글 폰트 느낌 */
+}
+
+.gemini-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.gemini-modal-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.gemini-modal-header .close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 0.2rem 0.5rem;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.gemini-modal-header .close-btn:hover {
+  background: var(--color-hover-bg);
+}
+
+/* 입력 그룹 (인풋 + 버튼 가로 배치) */
+.gemini-input-group {
+  display: flex;
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+
+.gemini-input {
+  flex: 1;
+  padding: 0.8rem 1rem;
+  border: 1px solid #c4c7c5; /* 구글 스타일의 회색 테두리 */
+  border-radius: 4px;
+  font-size: 1rem;
+  background: white;
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border 0.2s, box-shadow 0.2s;
+}
+
+.gemini-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.gemini-primary-btn {
+  background-color: #0b57d0; /* Gemini Blue */
+  color: white;
+  border: none;
+  border-radius: 20px; /* 둥근 버튼 */
+  padding: 0 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.gemini-primary-btn:hover:not(:disabled) {
+  background-color: #0842a0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.gemini-primary-btn:disabled {
+  background-color: #e3e3e3;
+  color: #a8a8a8;
+  cursor: not-allowed;
+}
+
+/* 하단 링크 버튼 (폴더 업로드) */
+.gemini-footer-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.gemini-link-btn {
+  background: transparent;
+  border: none;
+  color: #0b57d0; /* 링크 색상 */
+  font-size: 0.9rem;
+  font-weight: 500;
+  padding: 0.5rem 0.5rem 0.5rem 0; /* 왼쪽 정렬 */
+  cursor: pointer;
+}
+
+.gemini-link-btn:hover {
+  text-decoration: underline;
+  background: transparent;
+}
+
+.composer .upload-popover button.list-item {
+  width: 100%;          /* 40px 고정을 해제하고 가로를 꽉 채움 */
+  height: auto;         /* 40px 고정을 해제 */
+  border-radius: 8px;   /* 50%(동그라미)를 해제하고 둥근 사각형으로 */
+  justify-content: flex-start; /* 내용을 왼쪽 정렬 */
+  padding: 0.75rem 1rem; /* 패딩 복구 */
+  background: transparent;
+  color: var(--color-text-primary); /* 텍스트 색상 복구 */
+}
+
+.composer .upload-popover button.list-item:hover {
+  background: var(--color-hover-bg); /* 호버 시 배경색 정상 적용 */
 }

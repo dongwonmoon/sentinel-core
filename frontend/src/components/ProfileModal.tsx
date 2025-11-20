@@ -17,7 +17,6 @@ type Props = {
   onClose: () => void;
 };
 
-// 백엔드 /chat/profile API의 응답 형태
 /** 백엔드 `/chat/profile` API의 응답 본문 타입을 정의합니다. */
 type ProfileResponse = {
   profile_text: string;

@@ -43,7 +43,7 @@ export default function Sidebar({
     onNewChat,
 }: Props) {
   // `useAuth` 훅을 통해 현재 사용자 정보와 로그아웃 함수를 가져옵니다.
-  const { user, token, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   // 프로필 모달의 열림/닫힘 상태를 관리합니다.
   const [showProfileModal, setShowProfileModal] = useState(false);  
 
@@ -89,7 +89,7 @@ export default function Sidebar({
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             {/* 프로필 모달을 여는 버튼 */}
             <button
-              className="ghost gemini-icon-button" // ⬅️ Gemini 스타일 아이콘 버튼 클래스 적용
+              className="ghost gemini-icon-button"
               onClick={() => setShowProfileModal(true)}
               title="프로필"
             >
@@ -97,7 +97,7 @@ export default function Sidebar({
             </button>
             {/* 로그아웃 버튼 */}
             <button 
-              className="ghost gemini-icon-button" // ⬅️ Gemini 스타일 아이콘 버튼 클래스 적용
+              className="ghost gemini-icon-button"
               onClick={signOut}
               title="로그아웃"
             >

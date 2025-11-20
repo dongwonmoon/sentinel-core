@@ -142,36 +142,6 @@ GUARDRAIL_PROMPT_TEMPLATE = """
 # 4. RAG 및 메모리 관련 프롬프트
 # ==============================================================================
 
-HYPOTHETICAL_QUESTION_PROMPT = """
-# 지시(Instruction)
-당신은 질문 생성 전문가입니다. 아래의 [텍스트 조각]을 보고,
-이 조각이 완벽하게 답변할 수 있는 가상의 질문을 '하나'만 생성하세요.
-오직 질문만 응답하고, 그 외 어떤 텍스트도 포함하지 마세요.
-
-# 설명
-이 프롬프트는 HyDE(Hypothetical Document Embeddings) 전략에 사용됩니다.
-문서 청크 자체를 임베딩하는 대신, 해당 청크가 답변할 수 있는 '가상의 질문'을 생성하여
-그 질문을 임베딩합니다. 이를 통해 사용자의 실제 질문과 더 유사한 벡터 공간에
-문서를 배치하여 검색 정확도를 높일 수 있습니다.
-
-# 텍스트 조각 (Text Chunk)
-{chunk_text}
-
-# 당신이 생성한 가상의 질문 (Your Hypothetical Question)
-"""
-
-SUMMARY_PROMPT_TEMPLATE = """
-# 지시(Instruction)
-최근 24시간 동안의 git 커밋 메시지들을 요약하세요.
-주요 기능 추가, 버그 수정, 그리고 브레이킹 체인지(Breaking Changes)에 초점을 맞추세요.
-오직 한국어로 된 간결한 요약문만 응답하세요.
-
-# 커밋 메시지 목록 (Commit Messages)
-{commit_messages}
-
-# 요약 (Summary)
-"""
-
 MEMORY_SUMMARY_PROMPT_TEMPLATE = """
 # 지시(Instruction)
 당신은 대화 내용 요약 전문가입니다. 아래의 [대화 기록]과 [사용자의 현재 질문]을 바탕으로,

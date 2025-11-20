@@ -24,9 +24,7 @@ type Props = {
   isRightPanelOpen: boolean;
   /** 우측 컨텍스트 패널의 열림/닫힘 상태를 토글하는 함수 */
   onToggleRightPanel: () => void;
-  /**  */
   handleUploadFiles: (files: FileList) => Promise<void>;
-  /**  */
   onOpenCodeModal: () => void;
 };
 
@@ -44,8 +42,6 @@ export default function ChatWindow({
   handleUploadFiles,
   onOpenCodeModal
 }: Props) {
-  // KB 등록 요청 모달을 띄울 첨부 파일 정보를 담는 상태
-
   return (
     <section className="chat-window">
       {/* 채팅창 상단 헤더 */}
@@ -83,8 +79,6 @@ export default function ChatWindow({
         handleUploadFiles={handleUploadFiles}
         onOpenCodeModal={onOpenCodeModal}
       />
-
-      {/* ⬇️ PromotionModal 렌더링 제거됨 */}
-    </section>
+    </section>>
   );
 }

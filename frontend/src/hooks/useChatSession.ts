@@ -98,14 +98,7 @@ export type SessionAttachment = {
  * @param sessionId - 현재 활성화된 채팅 세션의 ID. `null`일 경우 새 대화 상태를 의미합니다.
  * @returns 채팅 UI를 렌더링하고 상호작용하는 데 필요한 모든 상태와 함수.
  */
-/**
- * 단일 채팅 세션의 전체 상태와 로직을 관리하는 핵심 React Hook입니다.
- *
- * @param token - 인증에 사용될 JWT 토큰.
- * @param sessionId - 현재 활성화된 채팅 세션의 ID. `null`일 경우 새 대화 상태를 의미합니다.
- * @returns 채팅 UI를 렌더링하고 상호작용하는 데 필요한 모든 상태와 함수.
- */
-export function useChatSession(token: string, sessionId: string | null) {
+export function useChatSession(token: string, sessionId: string | null, onSessionChange?: (newId: string) => void) {
   // --- 상태 관리 (State Management) ---
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -417,9 +410,17 @@ export function useChatSession(token: string, sessionId: string | null) {
   const sendMessage = useCallback(
     async (payload: { query: string }) => {
       if (!payload.query.trim()) return;
-      if (!sessionId) {
-        notify("새 대화를 시작한 후 질문해주세요");
-        return;
+
+      let currentSessionId = sessionId;
+
+      if (!currentSessionId) {
+        if (onSessionChange) {
+          currentSessionId = crypto.randomUUID();
+          onSessionChange(currentSessionId);
+        } else {
+          notify("새 대화를 시작한 후 질문해주세요");
+          return;
+        }
       }
 
       // [낙관적 UI 업데이트] 사용자 메시지를 즉시 UI에 추가합니다.
@@ -433,7 +434,7 @@ export function useChatSession(token: string, sessionId: string | null) {
       const requestBody = {
         query: payload.query,
         top_k: 3,
-        session_id: sessionId,
+        session_id: currentSessionId,
       };
 
       // `streamQuery` 함수를 호출하여 SSE 스트리밍을 시작하고,
@@ -453,7 +454,7 @@ export function useChatSession(token: string, sessionId: string | null) {
         ref: abortControllerRef,
       });
     },
-    [token, sessionId] // `messages`는 의존성 배열에서 의도적으로 제거합니다.
+    [token, sessionId, onSessionChange] // `messages`는 의존성 배열에서 의도적으로 제거합니다.
                        // 스트리밍 중 `messages` 상태가 계속 변해도 `sendMessage` 함수가 재생성되지 않도록 하여,
                        // 안정적인 함수 참조를 유지하기 위함입니다.
   );

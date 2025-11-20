@@ -32,27 +32,6 @@ class BaseVectorStore(ABC):
         pass
 
     @abstractmethod
-    async def upsert_documents(
-        self, documents_data: List[Dict[str, Any]]
-    ) -> None:
-        """
-        문서와 그에 대한 벡터 임베딩을 데이터베이스에 추가하거나 업데이트(Upsert)합니다.
-
-        'Upsert'는 문서가 이미 존재하면 업데이트하고, 존재하지 않으면 새로 추가하는 동작을 의미합니다.
-        이 메서드는 문서의 내용, 메타데이터, 임베딩 벡터, 그리고 접근 권한 그룹을 함께 처리해야 합니다.
-
-        Args:
-            documents_data (List[Dict[str, Any]]):
-                업로드할 문서 데이터의 리스트. 각 딕셔너리는 다음 키를 포함해야 합니다:
-                - 'doc_id' (str): 문서의 고유 식별자.
-                - 'chunk_text' (str): 분할된 문서의 텍스트 내용.
-                - 'embedding' (List[float]): `chunk_text`에 대한 벡터 임베딩.
-                - 'metadata' (Dict): 추가적인 메타데이터 (예: 소스 파일 경로).
-                - 'permission_groups' (List[str]): 이 문서 청크에 접근할 수 있는 권한 그룹 목록.
-        """
-        pass
-
-    @abstractmethod
     async def search(
         self,
         query_embedding: List[float],
@@ -75,18 +54,5 @@ class BaseVectorStore(ABC):
         Returns:
             List[Dict[str, Any]]: 검색된 문서 청크 정보의 리스트.
                                   각 딕셔너리는 'chunk_text', 'metadata', 'score' 등을 포함합니다.
-        """
-        pass
-
-    @abstractmethod
-    async def delete_documents(self, doc_ids: List[str]) -> int:
-        """
-        주어진 문서 ID 목록과 일치하는 모든 문서와 그 청크들을 삭제합니다.
-
-        Args:
-            doc_ids (List[str]): 삭제할 문서의 고유 ID 리스트.
-
-        Returns:
-            int: 성공적으로 삭제된 `document_chunks` 레코드의 수.
         """
         pass
