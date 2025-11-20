@@ -236,11 +236,6 @@ class SessionAttachment(Base):
         server_default="indexing",
         comment="파일 상태: indexing, temporary, pending_review, promoted, rejected, failed",
     )
-    pending_review_metadata: Mapped[Optional[Dict[str, any]]] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="영구 지식으로 승격 요청 시 사용자가 제출한 메타데이터 (대상 KB, 권한 그룹 등)",
-    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.current_timestamp()
     )
