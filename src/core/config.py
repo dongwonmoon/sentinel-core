@@ -40,22 +40,14 @@ def get_settings() -> "Settings":
         Settings: 애플리케이션의 모든 설정이 포함된 Pydantic 모델 객체
     """
     logger.info("설정 객체를 초기화합니다...")
-    start_time = time.time()
     settings = Settings()
-    end_time = time.time()
-    logger.info(
-        f"설정 객체 초기화 완료. (소요 시간: {end_time - start_time:.4f}초)"
-    )
 
     # 데이터베이스 URL과 같은 주요 설정 값의 일부를 마스킹하여 로그에 출력
     # 실제 운영 환경에서는 더 정교한 마스킹 처리가 필요할 수 있습니다.
     logger.debug(
         f"로드된 데이터베이스 호스트: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}"
     )
-    logger.debug(f"로드된 LLM 제공자 (Fast): {settings.llm.fast.provider}")
-    logger.debug(
-        f"로드된 LLM 제공자 (Powerful): {settings.llm.powerful.provider}"
-    )
+    logger.debug(f"로드된 LLM 모델: {settings.llm.model_name}")
     return settings
 
 
@@ -81,9 +73,7 @@ def yaml_config_settings_source() -> dict[str, Any]:
         with open(config_path, "r", encoding="utf-8") as f:
             yaml_content = yaml.safe_load(f)
             if yaml_content:
-                logger.info(
-                    f"'config.yml' 파일에서 설정을 성공적으로 로드했습니다."
-                )
+                logger.info(f"'config.yml' 파일에서 설정을 성공적으로 로드했습니다.")
                 return yaml_content
             else:
                 logger.warning(f"'config.yml' 파일이 비어 있습니다.")
@@ -100,9 +90,7 @@ def yaml_config_settings_source() -> dict[str, Any]:
 class AppSettings(BaseModel):
     """애플리케이션 기본 정보 및 로깅 설정"""
 
-    title: str = Field(
-        "Sentinel RAG System", description="애플리케이션의 공식 명칭"
-    )
+    title: str = Field("Sentinel RAG System", description="애플리케이션의 공식 명칭")
     description: str = Field(
         "Enterprise-grade RAG system with advanced capabilities.",
         description="애플리케이션에 대한 간략한 설명",
@@ -122,9 +110,7 @@ class LLMSettings(BaseModel):
     provider: Literal["ollama", "openai", "anthropic"] = Field(
         ..., description="LLM 제공자 (예: 'ollama', 'openai')"
     )
-    model_name: str = Field(
-        ..., description="사용할 LLM의 모델명 (예: 'gemma2:9b')"
-    )
+    model_name: str = Field(..., description="사용할 LLM의 모델명 (예: 'gemma2:9b')")
     api_base: Optional[str] = Field(
         None,
         description="LLM API의 기본 URL (Ollama 또는 자체 호스팅 모델에 필요)",
@@ -154,12 +140,8 @@ class VectorStoreSettings(BaseModel):
     provider: Literal["pg_vector", "milvus"] = Field(
         ..., description="사용할 벡터 저장소 종류"
     )
-    milvus_host: Optional[str] = Field(
-        None, description="Milvus 사용 시 호스트 주소"
-    )
-    milvus_port: Optional[int] = Field(
-        None, description="Milvus 사용 시 포트 번호"
-    )
+    milvus_host: Optional[str] = Field(None, description="Milvus 사용 시 호스트 주소")
+    milvus_port: Optional[int] = Field(None, description="Milvus 사용 시 포트 번호")
 
 
 class RerankerSettings(BaseModel):
@@ -168,9 +150,7 @@ class RerankerSettings(BaseModel):
     provider: Literal["none", "cohere", "cross_encoder"] = Field(
         ..., description="사용할 리랭커 종류 ('none'으로 비활성화)"
     )
-    model_name: Optional[str] = Field(
-        None, description="Cross Encoder 사용 시 모델명"
-    )
+    model_name: Optional[str] = Field(None, description="Cross Encoder 사용 시 모델명")
 
 
 # --- 3. 메인 Settings 클래스 ---
@@ -190,9 +170,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = Field(..., description="PostgreSQL 사용자 이름")
     POSTGRES_PASSWORD: str = Field(..., description="PostgreSQL 비밀번호")
     POSTGRES_DB: str = Field(..., description="PostgreSQL 데이터베이스 이름")
-    POSTGRES_HOST: str = Field(
-        "localhost", description="PostgreSQL 호스트 주소"
-    )
+    POSTGRES_HOST: str = Field("localhost", description="PostgreSQL 호스트 주소")
     POSTGRES_PORT: int = Field(5432, description="PostgreSQL 포트 번호")
 
     # Redis 연결 정보 (Celery 브로커 및 결과 백엔드용)
@@ -212,15 +190,11 @@ class Settings(BaseSettings):
     # 외부 서비스 API 키 (선택 사항)
     # 필요한 서비스의 API 키만 .env 파일에 추가하여 사용합니다.
     OPENAI_API_KEY: Optional[str] = Field(None, description="OpenAI API 키")
-    ANTHROPIC_API_KEY: Optional[str] = Field(
-        None, description="Anthropic API 키"
-    )
+    ANTHROPIC_API_KEY: Optional[str] = Field(None, description="Anthropic API 키")
     COHERE_API_KEY: Optional[str] = Field(
         None, description="Cohere API 키 (Reranker용)"
     )
-    GOOGLE_API_KEY: Optional[str] = Field(
-        None, description="Google API 키 (검색용)"
-    )
+    GOOGLE_API_KEY: Optional[str] = Field(None, description="Google API 키 (검색용)")
     GOOGLE_CSE_ID: Optional[str] = Field(
         None, description="Google Custom Search Engine ID"
     )
@@ -231,19 +205,13 @@ class Settings(BaseSettings):
     )
 
     # Ollama API 기본 URL (docker-compose 등에서 주입)
-    OLLAMA_BASE_URL: Optional[str] = Field(
-        None, description="Ollama 서비스의 기본 URL"
-    )
+    OLLAMA_BASE_URL: Optional[str] = Field(None, description="Ollama 서비스의 기본 URL")
 
     # --- config.yml 또는 기본값으로 관리되는 구조화된 설정 ---
-    app: AppSettings = Field(
-        default_factory=AppSettings, description="앱 일반 설정"
-    )
+    app: AppSettings = Field(default_factory=AppSettings, description="앱 일반 설정")
     llm: LLMSettings = Field(..., description="메인 LLM 설정")
     embedding: EmbeddingSettings = Field(..., description="임베딩 모델 설정")
-    vector_store: VectorStoreSettings = Field(
-        ..., description="벡터 저장소 설정"
-    )
+    vector_store: VectorStoreSettings = Field(..., description="벡터 저장소 설정")
     reranker: RerankerSettings = Field(..., description="리랭커 설정")
     tools_enabled: List[
         Literal["duckduckgo_search", "google_search", "code_execution"]
@@ -322,59 +290,3 @@ class Settings(BaseSettings):
             yaml_config_settings_source,
             file_secret_settings,
         )
-
-
-# 이 파일이 직접 실행될 때 아래의 코드가 동작합니다.
-# 설정 로직이 올바르게 작동하는지 확인하기 위한 테스트 및 시연 목적으로 사용됩니다.
-if __name__ == "__main__":
-    # 테스트를 위해 기본 로깅 설정을 DEBUG 레벨로 구성합니다.
-    # 이는 설정 파일 로드 과정의 상세한 로그를 확인하기 위함입니다.
-    logging.basicConfig(level=logging.DEBUG)
-
-    print("--- 설정 객체 로드 테스트 ---")
-    # get_settings() 함수를 호출하여 설정 객체를 가져옵니다.
-    # 이 함수는 내부적으로 캐싱되므로, 여러 번 호출해도 실제 초기화는 한 번만 일어납니다.
-    settings_instance = get_settings()
-
-    print("\n[App Settings]")
-    print(f"  - Title: {settings_instance.app.title}")
-    print(f"  - Log Level: {settings_instance.app.log_level}")
-
-    print("\n[LLM Settings]")
-    print(f"  - Fast LLM Provider: {settings_instance.llm.fast.provider}")
-    print(f"  - Fast LLM Model: {settings_instance.llm.fast.model_name}")
-    print(
-        f"  - Powerful LLM Provider: {settings_instance.llm.powerful.provider}"
-    )
-    print(
-        f"  - Powerful LLM Model: {settings_instance.llm.powerful.model_name}"
-    )
-
-    print("\n[Database Settings]")
-    # 보안을 위해 비밀번호는 제외하고 주요 연결 정보만 출력합니다.
-    print(f"  - DB Host: {settings_instance.POSTGRES_HOST}")
-    print(f"  - DB Port: {settings_instance.POSTGRES_PORT}")
-    print(f"  - DB User: {settings_instance.POSTGRES_USER}")
-    # 데이터베이스 URL에서 비밀번호를 마스킹하여 출력합니다.
-    print(
-        f"  - Async URL: {settings_instance.DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}"
-    )
-    print(
-        f"  - Sync URL: {settings_instance.SYNC_DATABASE_URL.replace(settings_instance.POSTGRES_PASSWORD, '******')}"
-    )
-
-    print("\n[Enabled Tools]")
-    print(f"  - {settings_instance.tools_enabled}")
-
-    # get_settings()의 캐시 기능이 올바르게 동작하는지 확인합니다.
-    print("\n--- 캐시 기능 테스트 ---")
-    start = time.time()
-    s1 = get_settings()
-    print(f"첫 번째 호출: {time.time() - start:.6f}초 소요")
-
-    start = time.time()
-    s2 = get_settings()
-    print(f"두 번째 호출: {time.time() - start:.6f}초 소요 (캐시된 결과)")
-
-    # 두 객체가 동일한 메모리 주소를 참조하는지 확인하여 싱글턴 패턴을 검증합니다.
-    print(f"s1과 s2는 동일한 객체인가? {s1 is s2}")

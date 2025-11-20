@@ -13,6 +13,4 @@
 더 단순하고 추상적인 이름으로 감싸, 다른 모듈에서 쉽게 사용할 수 있도록 하기 위함입니다.
 """
 
-from ..orchestrator import Orchestrator as Agent
-
-__all__ = ["Agent"]
+from ..orchestrator import Orchestrator

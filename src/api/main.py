@@ -18,8 +18,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # 내부 모듈 임포트
 from ..core.config import get_settings
 from ..core.logger import get_logger
-from ..core.metrics import collector
-from ..core.metrics import router as metrics_router
 from .endpoints import auth, chat
 
 # --- 초기 설정 ---
@@ -58,33 +56,6 @@ logger.warning(
 )
 
 
-# 2. 요청 처리 시간 측정 미들웨어: 각 API 요청의 처리 시간을 측정하여 메트릭으로 기록합니다.
-#    이는 시스템의 성능을 모니터링하고 서비스 수준 목표(SLO)를 추적하는 데 필수적입니다.
-class RequestTimingMiddleware(BaseHTTPMiddleware):
-    """각 API 요청의 처리 시간을 측정하여 Prometheus 메트릭으로 기록하는 미들웨어입니다."""
-
-    async def dispatch(self, request: Request, call_next):
-        start_time = time.perf_counter()
-        # 다음 미들웨어 또는 실제 엔드포인트로 요청을 전달하고 응답을 받습니다.
-        response = await call_next(request)
-        end_time = time.perf_counter()
-
-        duration_ms = (end_time - start_time) * 1000
-        path = request.url.path
-
-        # 메트릭 수집기에 요청 경로와 처리 시간을 기록합니다.
-        collector.observe_request(path, duration_ms)
-        logger.debug(f"Request '{path}' processed in {duration_ms:.2f}ms")
-
-        return response
-
-
-app.add_middleware(RequestTimingMiddleware)
-logger.info(
-    "요청 처리 시간 측정을 위한 'RequestTimingMiddleware'가 추가되었습니다."
-)
-
-
 # --- 라우터(Router) 등록 ---
 # 각 기능별로 분리된 엔드포인트(라우터)들을 메인 앱에 등록합니다.
 # `prefix`는 해당 라우터의 모든 엔드포인트에 공통적으로 적용될 URL 경로 접두사입니다.
@@ -92,7 +63,6 @@ logger.info(
 logger.info("API 라우터를 등록합니다...")
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(metrics_router, prefix="/metrics", tags=["Metrics"])
 logger.info("모든 API 라우터가 성공적으로 등록되었습니다.")
 
 

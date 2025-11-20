@@ -182,9 +182,7 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="메시지 내용"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -207,9 +205,6 @@ class ChatHistory(Base):
 class SessionAttachment(Base):
     """
     'session_attachments' 테이블: 사용자가 채팅 세션에 '임시'로 첨부한 파일을 관리합니다.
-
-    이 모델은 '듀얼 RAG'의 한 축인 'Session KB'를 구성하며, 파일의 상태
-    (인덱싱 중, 임시, 승격 검토 중 등)를 추적하는 거버넌스 워크플로우의 첫 단계입니다.
     """
 
     __tablename__ = "session_attachments"
@@ -295,4 +290,6 @@ class SessionAttachmentChunk(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        return (
+            f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        )

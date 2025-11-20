@@ -34,9 +34,7 @@ class AgentNodes:
         # 최근 10개 하드코딩. 추후 개선
         recent_turns = state.get("chat_history", [])[-10:]
         history_str = (
-            "\n".join(
-                [f"{msg['role']}: {msg['content']}" for msg in recent_turns]
-            )
+            "\n".join([f"{msg['role']}: {msg['content']}" for msg in recent_turns])
             if recent_turns
             else "없음"
         )
@@ -59,9 +57,7 @@ class AgentNodes:
         session_id = state["session_id"]
 
         # 1. 임베딩 생성
-        query_embedding = self.vector_store.embedding_model.embed_query(
-            question
-        )
+        query_embedding = self.vector_store.embedding_model.embed_query(question)
 
         try:
             # 2. 세션 전용 검색 (Session KB)
@@ -100,9 +96,7 @@ class AgentNodes:
                 [f"- {doc['chunk_text']}" for doc in rag_chunks]
             )
         else:
-            context_str = (
-                "참고할 문서가 없습니다. 일반적인 지식으로 답변합니다."
-            )
+            context_str = "참고할 문서가 없습니다. 일반적인 지식으로 답변합니다."
 
         # 프롬프트 구성
         prompt = prompts.FINAL_ANSWER_PROMPT_TEMPLATE.format(
@@ -115,9 +109,7 @@ class AgentNodes:
 
         # 스트리밍 응답 생성
         full_answer = ""
-        async for chunk in self.llm.stream(
-            [HumanMessage(content=prompt)], config={}
-        ):
+        async for chunk in self.llm.stream([HumanMessage(content=prompt)], config={}):
             full_answer += chunk.content
 
         return {"answer": full_answer}

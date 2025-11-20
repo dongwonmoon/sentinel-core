@@ -67,6 +67,9 @@ class Orchestrator:
 
         # 1. LangGraph의 각 노드(Node)에서 실행될 실제 로직을 담고 있는 `AgentNodes` 클래스를 인스턴스화합니다.
         #    이 클래스에 모든 핵심 컴포넌트를 전달하여, 각 노드가 필요로 하는 기능에 접근할 수 있도록 합니다.
+
+        # 인터페이스 오염: vector_store
+        # Agent는 오직 "검색"만 필요한데, 쓰기/삭제 권한까지 가진 객체를 넘겨받음.
         logger.debug("AgentNodes를 초기화합니다...")
         nodes = AgentNodes(
             llm=llm,

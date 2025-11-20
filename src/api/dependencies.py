@@ -23,29 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from ..core import factories
-from ..core.agent import Agent
-from ..core.config import Settings, get_settings as get_app_settings
+from ..core.agent import Orchestrator
+from ..core.config import Settings, get_settings
 from ..core.security import verify_token
-from ..core.rate_limiter import rate_limiter
 from ..components.vector_stores.pg_vector_store import PgVectorStore
 from ..core.logger import get_logger
 from . import schemas
 
 logger = get_logger(__name__)
-
-# --- 싱글톤 의존성 (애플리케이션 수명 주기 동안 한 번만 생성) ---
-
-
-@lru_cache
-def get_settings() -> Settings:
-    """
-    설정 객체를 반환합니다.
-    `@lru_cache` 데코레이터를 통해 이 함수는 최초 호출 시에만 `get_app_settings()`를 실행하고,
-    그 결과를 캐시합니다. 이후 모든 호출에서는 캐시된 `Settings` 객체를 즉시 반환하여,
-    애플리케이션 전체에서 일관된 설정을 사용하도록 보장하고 불필요한 파일 I/O를 방지합니다.
-    """
-    logger.info("설정(Settings) 객체를 처음으로 로드하고 캐시합니다.")
-    return get_app_settings()
 
 
 # OAuth2PasswordBearer는 FastAPI가 토큰 기반 인증을 처리하는 데 사용하는 클래스입니다.
@@ -54,7 +39,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 
 @lru_cache
-def get_agent() -> Agent:
+def get_agent() -> Orchestrator:
     """
     애플리케이션의 핵심 로직을 수행하는 `Agent` 인스턴스를 생성하고 반환합니다.
 
@@ -62,9 +47,7 @@ def get_agent() -> Agent:
     애플리케이션 시작 시 단 한 번만 초기화되도록 합니다. 이는 비용이 큰 모델 로딩 등의
     작업을 반복하지 않게 하여 성능을 크게 향상시킵니다.
     """
-    logger.info(
-        "핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다..."
-    )
+    logger.info("핵심 Agent 및 하위 컴포넌트(LLM, Vector Store 등)를 초기화합니다...")
     start_time = time.time()
 
     settings = get_settings()
@@ -91,7 +74,7 @@ def get_agent() -> Agent:
     # tools = factories.get_tools(settings.tools_enabled)
 
     # 2. 생성된 컴포넌트들을 `Agent` 클래스에 의존성으로 주입하여 최종 에이전트 인스턴스를 생성합니다.
-    agent = Agent(
+    agent = Orchestrator(
         llm=llm,
         vector_store=vector_store,
         reranker=reranker,
@@ -99,9 +82,7 @@ def get_agent() -> Agent:
     )
 
     end_time = time.time()
-    logger.info(
-        f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)"
-    )
+    logger.info(f"Agent 초기화 완료. (소요 시간: {end_time - start_time:.2f}초)")
     return agent
 
 
@@ -133,9 +114,7 @@ async def get_redis_client(
         try:
             yield redis
         except Exception as e:
-            logger.error(
-                f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True
-            )
+            logger.error(f"Redis 클라이언트 작업 중 오류 발생: {e}", exc_info=True)
             raise
         finally:
             # `async with` 블록이 끝나면 클라이언트는 자동으로 풀에 반환되므로,
@@ -147,7 +126,7 @@ async def get_redis_client(
 
 
 async def get_db_session(
-    agent: Agent = Depends(get_agent),
+    agent: Orchestrator = Depends(get_agent),
 ) -> AsyncGenerator[AsyncSession, None]:
     """
     API 요청마다 새로운 데이터베이스 세션(AsyncSession)을 생성하고,
@@ -167,9 +146,7 @@ async def get_db_session(
     # PgVectorStore 만이 AsyncSession 팩토리를 노출하므로, 다른 벡터 스토어가 활성화된 경우
     # 잘못된 의존성 사용을 조기에 차단한다.
     if not isinstance(vector_store, PgVectorStore):
-        logger.error(
-            "PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다."
-        )
+        logger.error("PgVectorStore가 아닌 벡터 저장소에 DB 세션을 요청했습니다.")
         raise HTTPException(
             status_code=501,
             detail="Database session is only available when using PgVectorStore.",
@@ -261,49 +238,3 @@ async def get_current_user(
 
     logger.debug(f"사용자 '{user.username}' 인증 및 정보 조회 완료.")
     return user
-
-
-# --- 속도 제한(Rate Limit) 의존성 ---
-
-
-async def enforce_chat_rate_limit(
-    current_user: schemas.UserInDB = Depends(get_current_user),
-) -> None:
-    """채팅 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
-    try:
-        # `rate_limiter`는 Redis를 사용하여 사용자 ID별로 'chat' 유형의 요청 횟수를 추적합니다.
-        # 설정된 시간 내에 허용된 요청 횟수를 초과하면 `ValueError`를 발생시킵니다.
-        await rate_limiter.assert_within_limit(
-            "chat", str(current_user.user_id)
-        )
-        logger.debug(f"사용자 '{current_user.username}'의 채팅 속도 제한 통과.")
-    except ValueError as exc:
-        logger.warning(
-            f"사용자 '{current_user.username}'가 채팅 속도 제한에 도달했습니다: {exc}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-        ) from exc
-
-
-async def enforce_document_rate_limit(
-    current_user: schemas.UserInDB = Depends(get_current_user),
-) -> None:
-    """문서 관련 엔드포인트에 대한 사용자별 속도 제한을 강제합니다."""
-    try:
-        # `rate_limiter`는 Redis를 사용하여 사용자 ID별로 'documents' 유형의 요청 횟수를 추적합니다.
-        await rate_limiter.assert_within_limit(
-            "documents", str(current_user.user_id)
-        )
-        logger.debug(
-            f"사용자 '{current_user.username}'의 문서 작업 속도 제한 통과."
-        )
-    except ValueError as exc:
-        logger.warning(
-            f"사용자 '{current_user.username}'가 문서 작업 속도 제한에 도달했습니다: {exc}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-        ) from exc
