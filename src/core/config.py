@@ -133,17 +133,6 @@ class LLMSettings(BaseModel):
         0.0, description="모델의 창의성 조절 (0.0: 결정적, 1.0: 창의적)"
     )
 
-
-class LLMGroup(BaseModel):
-    """
-    용도별 LLM 그룹 설정.
-    'fast'는 빠른 응답이 필요한 작업에, 'powerful'은 복잡한 추론이 필요한 작업에 사용됩니다.
-    """
-
-    fast: LLMSettings = Field(..., description="빠른 응답용 LLM 설정")
-    powerful: LLMSettings = Field(..., description="고성능 추론용 LLM 설정")
-
-
 class EmbeddingSettings(BaseModel):
     """텍스트 임베딩 모델에 대한 설정"""
 
@@ -249,7 +238,7 @@ class Settings(BaseSettings):
     app: AppSettings = Field(
         default_factory=AppSettings, description="앱 일반 설정"
     )
-    llm: LLMGroup = Field(..., description="LLM 그룹 설정")
+    llm: LLMSettings = Field(..., description="메인 LLM 설정")
     embedding: EmbeddingSettings = Field(..., description="임베딩 모델 설정")
     vector_store: VectorStoreSettings = Field(
         ..., description="벡터 저장소 설정"

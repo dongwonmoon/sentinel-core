@@ -15,14 +15,12 @@ logger = get_logger(__name__)
 class AgentNodes:
     def __init__(
         self,
-        fast_llm: BaseLLM,
-        powerful_llm: BaseLLM,
+        llm: BaseLLM,
         vector_store: BaseVectorStore,
         reranker: BaseReranker,
         tools: Dict[str, BaseTool],
     ):
-        # MVP에서는 powerful_llm만 사용하여 품질을 최우선으로 합니다.
-        self.llm = powerful_llm
+        self.llm = llm
         self.vector_store = vector_store
         self.reranker = reranker
 

@@ -32,11 +32,10 @@ class Orchestrator:
 
     def __init__(
         self,
-        fast_llm: BaseLLM,
-        powerful_llm: BaseLLM,
+        llm: BaseLLM,
         vector_store: BaseVectorStore,
         reranker: BaseReranker,
-        tools: List[BaseTool],
+        # tools: List[BaseTool],
     ):
         """
         Orchestrator 인스턴스를 초기화합니다.
@@ -59,13 +58,10 @@ class Orchestrator:
         self.reranker = reranker
 
         # 도구 리스트를 이름-객체 매핑 형태의 딕셔너리로 변환하여, 이름으로 쉽게 도구를 찾아 사용할 수 있게 합니다.
-        tools_dict = {tool.name: tool for tool in tools}
+        tools_dict = {tool.name: tool for tool in []}
 
         logger.info(f"사용 가능한 도구: {list(tools_dict.keys())}")
-        logger.info(f"Fast LLM: {fast_llm.model_name} ({fast_llm.provider})")
-        logger.info(
-            f"Powerful LLM: {powerful_llm.model_name} ({powerful_llm.provider})"
-        )
+        logger.info(f"LLM: {llm.model_name} ({llm.provider})")
         logger.info(f"Vector Store: {vector_store.provider}")
         logger.info(f"Reranker: {reranker.provider}")
 
@@ -73,8 +69,7 @@ class Orchestrator:
         #    이 클래스에 모든 핵심 컴포넌트를 전달하여, 각 노드가 필요로 하는 기능에 접근할 수 있도록 합니다.
         logger.debug("AgentNodes를 초기화합니다...")
         nodes = AgentNodes(
-            fast_llm=fast_llm,
-            powerful_llm=powerful_llm,
+            llm=llm,
             vector_store=self.vector_store,
             reranker=self.reranker,
             tools=tools_dict,

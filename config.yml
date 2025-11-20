@@ -1,60 +1,24 @@
-# 이 파일에서 애플리케이션의 모든 설정을 중앙에서 관리합니다.
-# 설정은 각 컴포넌트(app, llm, embedding 등)별로 그룹화됩니다.
-
 app:
   title: "Sentinel RAG System"
-  description: "Enterprise-grade RAG system with advanced capabilities."
-  log_level: "DEBUG" # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  description: "Solid MVP with Session RAG"
+  log_level: "INFO"
   log_format: "%(asctime)s - %(name)s - %(levelname)s - %(pathname)s:%(lineno)d - %(funcName)s - %(message)s"
 
-# LLM(Large Language Model) 설정
 llm:
-  # 빠른 LLM: 라우팅, 간단한 답변 등 빠른 응답이 중요한 작업에 사용
-  fast:
-    # provider: "ollama", "openai", "anthropic" 중 선택
-    # provider: "openai"
-    # model_name: "llama-3.3-70b-versatile"
-    # api_base: "https://api.groq.com/openai/v1"
-    provider: "ollama"
-    model_name: "gemma3:1b"
-    # api_base: "http://localhost:11435"
-    temperature: 0
+  # provider: "ollama", "openai"
+  provider: "openai"
+  model_name: "gpt-4o"
+  # api_base: "https://api.groq.com/openai/v1" # 필요시 활성화
+  temperature: 0
 
-  # 강력한 LLM: 코드 생성, 복잡한 추론 등 고성능이 필요한 작업에 사용
-  powerful:
-    # provider: "ollama", "openai", "anthropic" 중 선택
-    # .env 파일의 POWERFUL_... 변수로 아래 값을 덮어쓸 수 있습니다.
-    provider: "openai"
-    model_name: "llama-3.3-70b-versatile"
-    api_base: "https://api.groq.com/openai/v1"
-    temperature: 0
-
-# 임베딩 모델 설정
 embedding:
-  # provider: "ollama", "openai", "huggingface" 중 선택
   provider: "ollama"
-  # provider가 ollama 또는 openai일 경우, 이 모델 이름을 사용합니다.
   model_name: "nomic-embed-text"
-  # api_base: "http://localhost:11435"
-  # provider가 huggingface일 경우, 이 모델 이름을 사용합니다.
-  # huggingface_model_name: "sentence-transformers/all-MiniLM-L6-v2"
 
-# 벡터 저장소 설정
 vector_store:
-  # provider: "pg_vector", "milvus" 중 선택
   provider: "pg_vector"
-  milvus_host: null
-  milvus_port: null
 
-# 리랭커 설정
 reranker:
-  # provider: "none", "cohere", "cross_encoder" 중 선택
   provider: "none"
-  # provider가 cross_encoder일 경우, 이 모델 이름을 사용합니다.
-  model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-# 활성화할 도구 목록
-tools_enabled:
-  - "duckduckgo_search"
-  - "code_execution"
-  # - "google_search"
+  # provider: "cross_encoder"
+  # model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"

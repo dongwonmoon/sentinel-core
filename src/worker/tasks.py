@@ -58,58 +58,10 @@ CODE_LANGUAGE_MAP = {
 }
 
 
-async def _generate_hypothetical_question(chunk_text: str, llm: BaseLLM) -> str:
-    """
-    [비동기 헬퍼] LLM을 호출하여 청크 내용에 기반한 가상 질문(Hypothetical Question)을 생성합니다.
-
-    이 함수는 HyDE(Hypothetical Document Embeddings) 기법을 구현합니다.
-    HyDE의 핵심 아이디어는 사용자의 실제 질문과 유사한 형태의 "가상" 질문을 생성하고,
-    이 질문을 임베딩하여 벡터 검색에 사용하는 것입니다. 이렇게 하면 원본 문서 청크의
-    임베딩보다 사용자 질문의 임베딩과 더 가까운 공간에 위치하게 되어 검색 정확도가
-    향상될 수 있습니다.
-
-    Args:
-        chunk_text (str): 가상 질문을 생성할 원본 문서 청크의 텍스트.
-        llm (BaseLLM): 가상 질문 생성을 위해 호출할 LLM 인스턴스.
-
-    Returns:
-        str: 생성된 가상 질문. 생성에 실패하거나 타임아웃이 발생하면 원본 청크 텍스트를 반환합니다.
-    """
-    # 내용이 없는 청크는 처리하지 않습니다.
-    if not chunk_text.strip():
-        return ""
-
-    # 프롬프트에 청크 텍스트를 주입하여 LLM에 전달할 최종 프롬프트를 완성합니다.
-    prompt = prompts.HYPOTHETICAL_QUESTION_PROMPT.format(chunk_text=chunk_text)
-    try:
-        # LLM 호출이 무한정 길어지는 것을 방지하기 위해 15초 타임아웃을 설정합니다.
-        response = await asyncio.wait_for(
-            llm.invoke([HumanMessage(content=prompt)], config={}), timeout=15.0
-        )
-        question = response.content.strip()
-        logger.debug(
-            f"HyDE 생성: 원본 '%.20s...' -> 질문 '%s'", chunk_text, question
-        )
-        return question
-    except asyncio.TimeoutError:
-        # 타임아웃 발생 시, 검색 품질 저하를 감수하고 원본 텍스트를 임베딩 소스로 사용합니다.
-        logger.warning(
-            f"HyDE: 가상 질문 생성 시간 초과 (원본: '%.20s...')", chunk_text
-        )
-        return chunk_text  # 실패 시 원본 텍스트를 그대로 반환하여 임베딩 소스로 사용
-    except Exception as e:
-        # 기타 예외 발생 시에도 원본 텍스트를 사용합니다.
-        logger.warning(
-            f"HyDE: 가상 질문 생성 실패 (원본: '%.20s...'): %s", chunk_text, e
-        )
-        return chunk_text  # 실패 시 원본 텍스트를 그대로 반환
-
-
 async def _load_and_split_documents(
     temp_file_path: str,
     file_name: str,
     text_splitter_default: RecursiveCharacterTextSplitter,
-    llm: BaseLLM,
 ) -> List[Document]:
     """
     [비동기 헬퍼] 단일 파일을 로드하고 적절한 청크로 분할한 후, 각 청크에 대한 가상 질문(HyDE)을 생성합니다.
@@ -133,9 +85,7 @@ async def _load_and_split_documents(
                         가상 질문이 포함된 `Document` 객체의 리스트.
     """
     file_ext = os.path.splitext(file_name)[1].lower()
-    logger.debug(
-        f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'"
-    )
+    logger.debug(f"문서 로드 및 분할 시작: 파일='{file_name}', 확장자='{file_ext}'")
 
     # 1. 파일 확장자에 따라 적절한 로더 선택
     # PDF, Markdown 등 특정 형식에 맞는 파서를 사용하여 텍스트를 정확하게 추출합니다.
@@ -168,26 +118,9 @@ async def _load_and_split_documents(
             )
 
     split_chunks = splitter.split_documents(docs)
-    logger.debug(
-        f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다."
-    )
+    logger.debug(f"'{file_name}' 파일을 {len(split_chunks)}개의 청크로 분할했습니다.")
 
-    # 3. 각 청크에 대해 가상 질문을 비동기적으로 병렬 생성 (HyDE)
-    # asyncio.gather를 사용하여 여러 LLM 호출을 동시에 실행함으로써 전체 처리 시간을 단축합니다.
-    tasks = [
-        _generate_hypothetical_question(chunk.page_content, llm)
-        for chunk in split_chunks
-    ]
-    hypothetical_questions = await asyncio.gather(*tasks)
-
-    # 4. 최종적으로 반환할 문서 목록에 가상 질문을 메타데이터로 추가
-    # 이 'embedding_source_text'는 이후 임베딩 모델에 전달될 텍스트가 됩니다.
-    final_docs = []
-    for i, chunk in enumerate(split_chunks):
-        chunk.metadata["embedding_source_text"] = hypothetical_questions[i]
-        final_docs.append(chunk)
-
-    return final_docs
+    return split_chunks
 
 
 def _initialize_components_for_task() -> Dict[str, Any]:
@@ -216,9 +149,6 @@ def _initialize_components_for_task() -> Dict[str, Any]:
     vector_store = factories.create_vector_store(
         settings.vector_store, settings, embedding_model
     )
-    fast_llm = factories.create_llm(
-        settings.llm.fast, settings, settings.OPENAI_API_KEY
-    )
     text_splitter_default = RecursiveCharacterTextSplitter(
         chunk_size=1000, chunk_overlap=200
     )
@@ -226,7 +156,6 @@ def _initialize_components_for_task() -> Dict[str, Any]:
     return {
         "embedding_model": embedding_model,
         "vector_store": vector_store,
-        "fast_llm": fast_llm,
         "text_splitter_default": text_splitter_default,
     }
 
@@ -234,132 +163,92 @@ def _initialize_components_for_task() -> Dict[str, Any]:
 # --- Celery 태스크 정의 ---
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def process_session_attachment_indexing(
     self, attachment_id: int, file_path: str, file_name: str
 ):
-    """
-    [Celery Task] (신규) 세션에 첨부된 디렉토리(ZIP)를 인덱싱하여 'Session KB'에 저장합니다.
-    (process_document_indexing 로직 재활용)
-    ZIP 압축 해제 → 파일별 청크/임베딩 → session_attachment_chunks 저장 순으로 처리합니다.
-    """
+    """단일 파일 인덱싱 태스크"""
     task_id = self.request.id
-    logger.info(
-        f"--- [Celery Task ID: {task_id}] '세션 디렉토리' 인덱싱 시작 (Attachment ID: {attachment_id}, 이름: {display_name}) ---"
-    )
+    logger.info(f"[Task {task_id}] 파일 인덱싱 시작: {file_name}")
 
     try:
         components = _initialize_components_for_task()
         vector_store = components["vector_store"]
-        fast_llm = components["fast_llm"]
-        text_splitter_default = components["text_splitter_default"]
-        all_chunks_to_index = []
+        text_splitter = components["text_splitter_default"]
 
-        # 1. ZIP 파일 처리 (기존 로직과 동일)
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with io.BytesIO(zip_content) as zip_buffer:
-                with zipfile.ZipFile(zip_buffer, "r") as zf:
-                    zf.extractall(temp_dir)
-
-            for root, _, files in os.walk(temp_dir):
-                # ... (숨김 파일 등 건너뛰기 로직) ...
-                if (
-                    any(part.startswith(".") for part in root.split(os.sep))
-                    or "__pycache__" in root
-                ):
-                    continue
-
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(file_path, temp_dir)
-                    try:
-                        chunks = asyncio.run(
-                            _load_and_split_documents(
-                                file_path,
-                                relative_path,
-                                text_splitter_default,
-                                fast_llm,
-                            )
-                        )
-                        # [세션 KB용 수정] 메타데이터에 원본 디렉토리 이름 추가
-                        for chunk in chunks:
-                            chunk.metadata.update(
-                                {
-                                    "source_type": "session-directory",
-                                    "original_group": display_name,
-                                    "source": relative_path,
-                                }
-                            )
-                        all_chunks_to_index.extend(chunks)
-                    except Exception as e:
-                        logger.warning(
-                            f"디렉토리 내 파일 '{relative_path}' 처리 중 오류: {e}"
-                        )
-
-        if not all_chunks_to_index:
-            logger.warning(
-                f"'{display_name}' 처리 후 인덱싱할 청크가 없습니다."
-            )
-            return {"status": "warning", "message": "No content to index."}
-
-        # 2. 임베딩 생성 (기존 로직과 동일)
-        embedding_source_texts = [
-            chunk.metadata.get("embedding_source_text", chunk.page_content)
-            for chunk in all_chunks_to_index
-        ]
-        chunk_embeddings = vector_store.embedding_model.embed_documents(
-            embedding_source_texts
+        # 1. 문서 로드 및 분할 (HyDE 없음)
+        chunks = asyncio.run(
+            _load_and_split_documents(file_path, file_name, text_splitter)
         )
 
-        # 3. [핵심 수정] 'session_attachment_chunks' 테이블에 저장
-        # (process_session_attachment_indexing의 저장 로직 재활용)
+        if not chunks:
+            logger.warning("인덱싱할 내용 없음.")
+            return {"status": "warning", "message": "No content"}
+
+        # 2. 임베딩 생성
+        texts_to_embed = [chunk.page_content for chunk in chunks]
+        embeddings = vector_store.embedding_model.embed_documents(texts_to_embed)
+
+        # 3. DB 저장 (청크 + 임베딩)
         chunks_to_store = [
             {
                 "attachment_id": attachment_id,
                 "chunk_text": chunk.page_content,
-                "embedding": str(embedding_vector),
+                "embedding": str(vec),
                 "extra_metadata": json.dumps(chunk.metadata),
             }
-            for chunk, embedding_vector in zip(
-                all_chunks_to_index, chunk_embeddings
-            )
+            for chunk, vec in zip(chunks, embeddings)
         ]
 
-        async def save_chunks_to_db():
-            if not hasattr(vector_store, "AsyncSessionLocal"):
-                raise TypeError("Vector store is missing AsyncSessionLocal")
+        async def save_to_db():
             async with vector_store.AsyncSessionLocal() as session:
                 async with session.begin():
-                    # 3a. 청크 삽입
-                    stmt_chunks_insert = text(
-                        """
-                        INSERT INTO session_attachment_chunks
-                        (attachment_id, chunk_text, embedding, extra_metadata)
-                        VALUES (:attachment_id, :chunk_text, :embedding, :extra_metadata)
-                        """
-                    )
-                    await session.execute(stmt_chunks_insert, chunks_to_store)
-                    # 3b. 부모 Attachment 상태를 'temporary'로 업데이트
-                    stmt_update_status = text(
-                        "UPDATE session_attachments SET status = 'temporary' WHERE attachment_id = :attachment_id"
-                    )
+                    # 청크 삽입
                     await session.execute(
-                        stmt_update_status, {"attachment_id": attachment_id}
+                        text(
+                            """
+                            INSERT INTO session_attachment_chunks 
+                            (attachment_id, chunk_text, embedding, extra_metadata)
+                            VALUES (:attachment_id, :chunk_text, :embedding, :extra_metadata)
+                        """
+                        ),
+                        chunks_to_store,
+                    )
+                    # 상태 업데이트
+                    await session.execute(
+                        text(
+                            "UPDATE session_attachments SET status = 'temporary' WHERE attachment_id = :id"
+                        ),
+                        {"id": attachment_id},
                     )
 
-        asyncio.run(save_chunks_to_db())
+        asyncio.run(save_to_db())
 
-        success_message = f"'{display_name}' 디렉토리 인덱싱 완료. {len(chunks_to_store)}개 청크 저장됨."
-        logger.info(
-            f"--- [Celery Task ID: {task_id}] 세션 디렉토리 인덱싱 성공 ---"
-        )
-        return {"status": "success", "message": success_message}
+        # (선택) 임시 파일 삭제
+        # if os.path.exists(file_path): os.remove(file_path)
+
+        return {"status": "success", "count": len(chunks)}
 
     except Exception as e:
-        logger.error(
-            f"--- [Celery Task ID: {task_id}] '{display_name}' 인덱싱 중 오류: {e} ---",
-            exc_info=True,
-        )
+        logger.error(f"인덱싱 실패: {e}", exc_info=True)
+
+        # 실패 상태 업데이트
+        async def set_failed():
+            components = _initialize_components_for_task()  # 세션 생성을 위해 필요
+            vs = components["vector_store"]
+            async with vs.AsyncSessionLocal() as session:
+                async with session.begin():
+                    await session.execute(
+                        text(
+                            "UPDATE session_attachments SET status = 'failed' WHERE attachment_id = :id"
+                        ),
+                        {"id": attachment_id},
+                    )
+
+        try:
+            asyncio.run(set_failed())
+        except:
+            pass
         raise self.retry(exc=e)
 
 
@@ -379,7 +268,6 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
     try:
         components = _initialize_components_for_task()
         vector_store = components["vector_store"]
-        fast_llm = components["fast_llm"]
         text_splitter_default = components["text_splitter_default"]
         all_chunks_to_index = []
 
@@ -398,7 +286,6 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
                                 file_path,
                                 relative_path,
                                 text_splitter_default,
-                                fast_llm,
                             )
                         )
                         # [세션 KB용 수정] 메타데이터 변경
@@ -418,22 +305,14 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
                         )
 
         if not all_chunks_to_index:
-            logger.warning(
-                f"'{repo_name}' 리포지토리에서 인덱싱할 콘텐츠가 없습니다."
-            )
+            logger.warning(f"'{repo_name}' 리포지토리에서 인덱싱할 콘텐츠가 없습니다.")
             return {
                 "status": "warning",
                 "message": "No content could be indexed.",
             }
 
-        # 2. 임베딩 생성 (기존 로직과 동일)
-        embedding_source_texts = [
-            chunk.metadata.get("embedding_source_text", chunk.page_content)
-            for chunk in all_chunks_to_index
-        ]
-        chunk_embeddings = vector_store.embedding_model.embed_documents(
-            embedding_source_texts
-        )
+        texts_to_embed = [chunk.page_content for chunk in all_chunks_to_index]
+        chunk_embeddings = vector_store.embedding_model.embed_documents(texts_to_embed)
 
         # 3. [핵심 수정] 'session_attachment_chunks' 테이블에 저장
         # (process_session_directory_indexing의 저장 로직과 동일)
@@ -444,9 +323,7 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
                 "embedding": str(embedding_vector),
                 "extra_metadata": json.dumps(chunk.metadata),
             }
-            for chunk, embedding_vector in zip(
-                all_chunks_to_index, chunk_embeddings
-            )
+            for chunk, embedding_vector in zip(all_chunks_to_index, chunk_embeddings)
         ]
 
         async def save_chunks_to_db():
@@ -472,9 +349,7 @@ def process_session_github_indexing(self, attachment_id: int, repo_url: str):
         asyncio.run(save_chunks_to_db())
 
         success_message = f"'{repo_name}' 리포지토리 인덱싱 완료. {len(chunks_to_store)}개 청크 저장됨."
-        logger.info(
-            f"--- [Celery Task ID: {task_id}] 세션 GitHub 인덱싱 성공 ---"
-        )
+        logger.info(f"--- [Celery Task ID: {task_id}] 세션 GitHub 인덱싱 성공 ---")
         return {"status": "success", "message": success_message}
 
     except GitCommandError as e:

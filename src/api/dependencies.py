@@ -79,29 +79,23 @@ def get_agent() -> Agent:
         settings.vector_store, settings, embedding_model
     )
 
-    logger.debug("Fast LLM 생성 중...")
-    fast_llm = factories.create_llm(
-        settings.llm.fast, settings, settings.OPENAI_API_KEY
-    )
-
-    logger.debug("Powerful LLM 생성 중...")
-    powerful_llm = factories.create_llm(
-        settings.llm.powerful, settings, settings.OPENAI_API_KEY
+    logger.debug("LLM 생성 중...")
+    llm = factories.create_llm(
+        settings.llm, settings, settings.OPENAI_API_KEY
     )
 
     logger.debug("리랭커 생성 중...")
     reranker = factories.create_reranker(settings.reranker)
 
-    logger.debug("활성화된 도구들 가져오는 중...")
-    tools = factories.get_tools(settings.tools_enabled)
+    # logger.debug("활성화된 도구들 가져오는 중...")
+    # tools = factories.get_tools(settings.tools_enabled)
 
     # 2. 생성된 컴포넌트들을 `Agent` 클래스에 의존성으로 주입하여 최종 에이전트 인스턴스를 생성합니다.
     agent = Agent(
-        fast_llm=fast_llm,
-        powerful_llm=powerful_llm,
+        llm=llm,
         vector_store=vector_store,
         reranker=reranker,
-        tools=tools,
+        # tools=tools,
     )
 
     end_time = time.time()
