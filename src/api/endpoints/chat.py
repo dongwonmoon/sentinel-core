@@ -96,7 +96,6 @@ async def query_agent(
             session_id=body.session_id,
             query=body.query,
             top_k=body.top_k,
-            permission_groups=current_user.permission_groups,
             user_profile=current_user.profile_text or "",
         )
     except Exception as e:

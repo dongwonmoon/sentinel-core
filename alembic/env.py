@@ -11,6 +11,7 @@ from alembic import context
 # 프로젝트 루트를 sys.path에 추가하여 'src' 모듈을 찾을 수 있도록 함
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
 from src.core.config import get_settings
+from src.db.models import Base 
 
 settings = get_settings()
 
@@ -29,7 +30,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

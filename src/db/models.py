@@ -78,12 +78,6 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(
         Text, nullable=False, comment="해시 처리된 비밀번호"
     )
-    permission_groups: Mapped[List[str]] = mapped_column(
-        ARRAY(Text),
-        server_default=func.text("ARRAY['all_users']"),
-        nullable=False,
-        comment="사용자가 속한 권한 그룹 목록 (RAG 문서 접근 제어에 사용)",
-    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -91,7 +85,7 @@ class User(Base):
     )
     is_active: Mapped[bool] = mapped_column(
         BOOLEAN,
-        server_default=func.text("true"),
+        server_default=sa.text("true"),
         nullable=False,
         comment="계정 활성화 여부 (비활성화 시 로그인 불가)",
     )
@@ -188,9 +182,7 @@ class ChatHistory(Base):
         nullable=False,
         comment="메시지 작성자 역할 ('user' 또는 'assistant')",
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="메시지 내용"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="메시지 내용")
     created_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.current_timestamp(),
@@ -306,4 +298,6 @@ class SessionAttachmentChunk(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        return (
+            f"<SessionAttachmentChunk(id={self.chunk_id}, att_id={self.attachment_id})>"
+        )

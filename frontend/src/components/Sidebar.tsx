@@ -48,7 +48,7 @@ export default function Sidebar({
   const [showProfileModal, setShowProfileModal] = useState(false);  
 
   // 방어적 코딩: 인증 정보가 없으면 컴포넌트를 렌더링하지 않습니다.
-  if (!user || !token) return null;
+  if (!user) return null;
 
   return (
     <>

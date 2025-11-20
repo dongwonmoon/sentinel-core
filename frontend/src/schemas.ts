@@ -23,10 +23,6 @@ export type User = {
    */
   is_active: boolean;
   /**
-   * 사용자가 속한 권한 그룹의 목록. RAG 검색 등에서 데이터 접근 제어에 사용됩니다.
-   */
-  permission_groups: string[];
-  /**
    * 계정이 생성된 시간 (ISO 8601 형식의 문자열).
    */
   created_at: string;

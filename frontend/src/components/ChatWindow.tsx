@@ -79,6 +79,6 @@ export default function ChatWindow({
         handleUploadFiles={handleUploadFiles}
         onOpenCodeModal={onOpenCodeModal}
       />
-    </section>>
+    </section>
   );
 }

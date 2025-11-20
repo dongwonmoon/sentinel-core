@@ -28,7 +28,6 @@ class TokenData(BaseModel):
     """JWT 토큰에 저장될 데이터 (페이로드)"""
 
     username: Optional[str] = None
-    permission_groups: Optional[List[str]] = None
 
 
 class UserBase(BaseModel):
@@ -41,7 +40,6 @@ class UserCreate(UserBase):
     """사용자 생성(회원가입) 요청 스키마"""
 
     password: str = Field(...)
-    permission_groups: List[str] = Field(default_factory=lambda: ["all_users"])
 
 
 class User(UserBase):
@@ -52,7 +50,6 @@ class User(UserBase):
 
     user_id: int
     is_active: bool
-    permission_groups: List[str]
     created_at: datetime
 
     # Pydantic V2 설정: SQLAlchemy 모델 객체(ORM 모델)로부터 Pydantic 모델을 직접 생성할 수 있도록 허용합니다.
@@ -129,15 +126,11 @@ class SessionContextUpdate(BaseModel):
 class Source(BaseModel):
     """답변의 출처(Source) 정보를 담는 스키마입니다."""
 
-    chunk_text: str = Field(
-        ..., description="RAG를 통해 검색된 원본 텍스트 청크"
-    )
+    chunk_text: str = Field(..., description="RAG를 통해 검색된 원본 텍스트 청크")
     metadata: Dict[str, Any] = Field(
         ..., description="청크에 대한 추가 정보 (예: 파일명, 페이지 번호)"
     )
-    score: float = Field(
-        ..., description="쿼리와의 유사도 점수 (높을수록 관련성 높음)"
-    )
+    score: float = Field(..., description="쿼리와의 유사도 점수 (높을수록 관련성 높음)")
 
 
 class UserProfileResponse(BaseModel):

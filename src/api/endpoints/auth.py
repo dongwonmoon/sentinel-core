@@ -69,18 +69,16 @@ async def register_user(
 
     # 2. 비밀번호를 bcrypt를 사용하여 안전하게 해시합니다. 원본 비밀번호는 절대 저장하지 않습니다.
     hashed_password = security.get_password_hash(user_create.password)
-    logger.debug(
-        f"사용자 '{user_create.username}'의 비밀번호 해싱을 완료했습니다."
-    )
+    logger.debug(f"사용자 '{user_create.username}'의 비밀번호 해싱을 완료했습니다.")
 
     # 3. 새로운 사용자 정보를 데이터베이스에 삽입합니다.
     # `RETURNING` 절을 사용하여 삽입된 레코드의 정보를 즉시 반환받아,
     # 별도의 SELECT 쿼리 없이 응답 데이터를 구성할 수 있습니다.
     stmt = text(
         """
-        INSERT INTO users (username, hashed_password, is_active, permission_groups)
-        VALUES (:username, :hashed_password, :is_active, :permission_groups)
-        RETURNING user_id, username, is_active, permission_groups, created_at
+        INSERT INTO users (username, hashed_password, is_active)
+        VALUES (:username, :hashed_password, :is_active)
+        RETURNING user_id, username, is_active, created_at
     """
     )
 
@@ -91,8 +89,6 @@ async def register_user(
                 "username": user_create.username,
                 "hashed_password": hashed_password,
                 "is_active": True,
-                "permission_groups": user_create.permission_groups
-                or ["all_users"],
             },
         )
         new_user_row = result.fetchone()
@@ -124,9 +120,7 @@ async def register_user(
         logger.exception(
             f"사용자 '{user_create.username}' 등록 중 예기치 않은 데이터베이스 오류가 발생했습니다."
         )
-        raise HTTPException(
-            status_code=500, detail=f"A database error occurred: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"A database error occurred: {e}")
 
 
 @router.post(
@@ -161,9 +155,7 @@ async def login_for_access_token(
         )
 
     if not user.is_active:
-        logger.warning(
-            f"로그인 실패: 사용자 '{username}'은(는) 비활성화된 계정입니다."
-        )
+        logger.warning(f"로그인 실패: 사용자 '{username}'은(는) 비활성화된 계정입니다.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )
@@ -173,12 +165,9 @@ async def login_for_access_token(
     # 애플리케이션별 커스텀 데이터('permission_groups')를 포함할 수 있습니다.
     access_token_data = {
         "sub": user.username,
-        "permission_groups": user.permission_groups,
     }
     access_token = security.create_access_token(data=access_token_data)
-    logger.info(
-        f"사용자 '{user.username}' 로그인에 성공하여 토큰을 발급했습니다."
-    )
+    logger.info(f"사용자 '{user.username}' 로그인에 성공하여 토큰을 발급했습니다.")
 
     return {"access_token": access_token, "token_type": "bearer"}
 

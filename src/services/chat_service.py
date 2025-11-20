@@ -45,7 +45,6 @@ async def build_stateful_agent_inputs(
     session_id: str,
     query: str,
     top_k: int,
-    permission_groups: list[str],
     user_profile: str,
 ) -> Dict[str, Any]:
     """
@@ -60,7 +59,6 @@ async def build_stateful_agent_inputs(
         session_id: 현재 채팅 세션 ID.
         query: 사용자의 현재 질문.
         top_k: RAG에서 사용할 상위 K개 문서 수.
-        permission_groups: 사용자의 권한 그룹.
         user_profile: 사용자의 프로필 정보.
 
     Returns:
@@ -75,9 +73,7 @@ async def build_stateful_agent_inputs(
         if context_raw:
             context = json.loads(context_raw)
             doc_ids_filter = context.get("doc_ids_filter")
-            logger.debug(
-                f"세션 '{session_id}'의 컨텍스트를 Redis에서 로드했습니다."
-            )
+            logger.debug(f"세션 '{session_id}'의 컨텍스트를 Redis에서 로드했습니다.")
     except Exception as e:
         # Redis는 세션 컨텍스트와 같은 비영구적 데이터를 저장하는 데 사용됩니다.
         # 만약 Redis에 장애가 발생하더라도, 채팅의 핵심 기능(LLM 호출, DB 기록)은
@@ -90,15 +86,13 @@ async def build_stateful_agent_inputs(
         db_session=db_session, user_id=user_id, session_id=session_id
     )
     chat_history = [
-        {"role": msg.role, "content": msg.content}
-        for msg in chat_history_models
+        {"role": msg.role, "content": msg.content} for msg in chat_history_models
     ]
 
     # 모든 정보를 종합하여 AgentState의 입력으로 사용될 딕셔너리를 구성합니다.
     inputs = {
         "question": query,
         "top_k": top_k,
-        "permission_groups": permission_groups,
         "user_profile": user_profile,
         "chat_history": chat_history,
         "doc_ids_filter": doc_ids_filter,
@@ -143,16 +137,12 @@ async def stream_agent_response(
     force_new_message_after_tool = False
 
     try:
-        logger.info(
-            f"세션 '{session_id}'에 대한 에이전트 스트리밍을 시작합니다."
-        )
+        logger.info(f"세션 '{session_id}'에 대한 에이전트 스트리밍을 시작합니다.")
         # 에이전트의 `stream_response` 메서드를 호출하여 이벤트 스트림을 받습니다.
         async for event in agent.stream_response(inputs):
             kind = event.get("event")
             if not stream_started:
-                logger.debug(
-                    f"세션 '{session_id}'의 첫 이벤트를 수신했습니다: {kind}"
-                )
+                logger.debug(f"세션 '{session_id}'의 첫 이벤트를 수신했습니다: {kind}")
                 stream_started = True
 
             # 'on_node_start': 특정 노드(도구) 실행 시작을 클라이언트에 알립니다.
@@ -200,9 +190,7 @@ async def stream_agent_response(
 
             # 'on_graph_end': 에이전트(그래프)의 모든 실행이 완료되었을 때 발생합니다.
             elif kind == "on_graph_end":
-                logger.debug(
-                    f"세션 '{session_id}'의 그래프 실행이 종료되었습니다."
-                )
+                logger.debug(f"세션 '{session_id}'의 그래프 실행이 종료되었습니다.")
                 final_state = event.get("data", {}).get("output")
                 if final_state and isinstance(final_state, dict):
                     # RAG를 통해 검색된 소스(Source)가 있다면 'sources' 이벤트로 클라이언트에 전송합니다.
@@ -218,9 +206,7 @@ async def stream_agent_response(
                         yield _build_sse_payload("sources", sources_dict)
 
         # 모든 스트림이 성공적으로 끝나면 'end' 이벤트를 전송하여 클라이언트가 연결 종료를 준비하게 합니다.
-        logger.info(
-            f"세션 '{session_id}'의 스트리밍이 성공적으로 완료되었습니다."
-        )
+        logger.info(f"세션 '{session_id}'의 스트리밍이 성공적으로 완료되었습니다.")
         yield _build_sse_payload("end", "Stream ended")
 
     except Exception as exc:
@@ -291,9 +277,7 @@ async def create_session_attachment(
         await db_session.rollback()
         logger.error(f"첨부파일 DB 레코드 생성 실패: {e}", exc_info=True)
         # 클라이언트에게 서버 내부 오류가 발생했음을 알립니다.
-        raise HTTPException(
-            status_code=500, detail="DB record creation failed."
-        )
+        raise HTTPException(status_code=500, detail="DB record creation failed.")
 
 
 async def save_chat_messages_task(
@@ -312,9 +296,7 @@ async def save_chat_messages_task(
     # 새로운 DB 세션을 생성해야 합니다. 벡터 저장소에서 세션 팩토리를 가져옵니다.
     session_local = getattr(agent.vector_store, "AsyncSessionLocal", None)
     if not session_local:
-        logger.error(
-            "백그라운드 저장을 위한 DB 세션 팩토리를 찾을 수 없습니다."
-        )
+        logger.error("백그라운드 저장을 위한 DB 세션 팩토리를 찾을 수 없습니다.")
         return
 
     # 'async with'를 사용하여 세션이 끝나면 자동으로 닫히도록 합니다.
@@ -370,8 +352,7 @@ async def fetch_session_attachments(
     result = await db_session.execute(stmt)
     attachments = result.scalars().all()
     return [
-        schemas.SessionAttachmentResponse.model_validate(att)
-        for att in attachments
+        schemas.SessionAttachmentResponse.model_validate(att) for att in attachments
     ]
 
 
@@ -396,9 +377,7 @@ async def fetch_user_sessions(
     Returns:
         list[schemas.ChatSession]: Pydantic 스키마로 변환된 채팅 세션 목록.
     """
-    logger.debug(
-        f"사용자 '{user_id}'의 채팅 세션 목록 조회를 위한 쿼리를 구성합니다."
-    )
+    logger.debug(f"사용자 '{user_id}'의 채팅 세션 목록 조회를 위한 쿼리를 구성합니다.")
     # CTE 1: 각 세션의 첫 사용자 메시지를 찾기 위해 순위를 매김
     ranked_messages_cte = (
         select(
@@ -444,8 +423,7 @@ async def fetch_user_sessions(
         )
         .join(
             latest_activity_cte,
-            ranked_messages_cte.c.session_id
-            == latest_activity_cte.c.session_id,
+            ranked_messages_cte.c.session_id == latest_activity_cte.c.session_id,
         )
         .where(
             ranked_messages_cte.c.rn == 1
@@ -455,9 +433,7 @@ async def fetch_user_sessions(
 
     result = await db_session.execute(stmt)
     sessions = [schemas.ChatSession(**row._asdict()) for row in result]
-    logger.debug(
-        f"사용자 '{user_id}'에 대해 {len(sessions)}개의 세션을 조회했습니다."
-    )
+    logger.debug(f"사용자 '{user_id}'에 대해 {len(sessions)}개의 세션을 조회했습니다.")
     return sessions
 
 
@@ -479,12 +455,8 @@ async def fetch_chat_history(
     result = await db_session.execute(stmt)
     # SQLAlchemy 모델 객체(row)를 Pydantic 스키마(ChatMessageInDB)로 변환합니다.
     # .from_orm()은 Pydantic V2의 기능으로, 데이터 유효성 검사와 직렬화를 수행합니다.
-    messages = [
-        schemas.ChatMessageInDB.from_orm(row) for row in result.scalars()
-    ]
-    logger.debug(
-        f"세션 '{session_id}'에서 {len(messages)}개의 메시지를 조회했습니다."
-    )
+    messages = [schemas.ChatMessageInDB.from_orm(row) for row in result.scalars()]
+    logger.debug(f"세션 '{session_id}'에서 {len(messages)}개의 메시지를 조회했습니다.")
     return messages
 
 

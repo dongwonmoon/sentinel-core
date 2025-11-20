@@ -35,9 +35,7 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(
-    data: dict, expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """주어진 데이터를 바탕으로 JWT Access Token을 생성합니다."""
     to_encode = data.copy()
     if expires_delta:
@@ -64,18 +62,15 @@ def verify_token(token: str, credentials_exception: Exception) -> TokenData:
             settings.AUTH_SECRET_KEY,
             algorithms=[settings.AUTH_ALGORITHM],
         )
-        # 페이로드에서 사용자 이름('sub' 클레임)과 권한 그룹을 추출합니다.
+        # 페이로드에서 사용자 이름('sub' 클레임)을 추출합니다.
         username: str = payload.get("sub")
-        permission_groups: List[str] = payload.get(
-            "permission_groups", ["all_users"]
-        )
 
         if username is None:
             # 토큰에 사용자 이름이 없는 경우, 유효하지 않은 토큰으로 간주합니다.
             raise credentials_exception
 
         # 추출된 정보를 Pydantic 모델로 래핑하여 반환합니다.
-        return TokenData(username=username, permission_groups=permission_groups)
+        return TokenData(username=username)
     except JWTError:
         # 토큰 검증 실패 시, 미리 전달받은 인증 예외를 발생시킵니다.
         raise credentials_exception
